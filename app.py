@@ -8,9 +8,11 @@ from PIL import Image
 import pytesseract
 import re
 import io
+import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v12.1 Full Cloud", layout="wide")
+st.set_page_config(page_title="MintStats v12.2 Manager", layout="wide")
+FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIKI ---
 TEAM_ALIASES = {
@@ -42,7 +44,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE BAZODANOWE ---
+# --- FUNKCJE BAZODANOWE (HISTORIA) ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -70,6 +72,22 @@ def get_all_data():
         conn.close()
         return df
     except: return pd.DataFrame()
+
+# --- ZARZĄDZANIE TERMINARZEM (PERSISTENCE) ---
+def load_fixture_pool():
+    if os.path.exists(FIXTURES_DB_FILE):
+        try:
+            return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
+        except:
+            return []
+    return []
+
+def save_fixture_pool(pool_data):
+    if pool_data:
+        pd.DataFrame(pool_data).to_csv(FIXTURES_DB_FILE, index=False)
+    else:
+        if os.path.exists(FIXTURES_DB_FILE):
+            os.remove(FIXTURES_DB_FILE)
 
 # --- MODEL POISSONA ---
 class PoissonModel:
@@ -202,26 +220,28 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
+# --- INIT ---
+if 'fixture_pool' not in st.session_state:
+    st.session_state.fixture_pool = load_fixture_pool()
+
+if 'generated_coupon' not in st.session_state:
+    st.session_state.generated_coupon = None
+
 # --- INTERFEJS ---
-st.title("☁️ MintStats v12.1: Full Cloud")
+st.title("☁️ MintStats v12.2: Manager Edition")
 
-if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = []
-if 'generated_coupon' not in st.session_state: st.session_state.generated_coupon = None
-
-# --- SIDEBAR: GŁÓWNA NAWIGACJA ---
+# --- SIDEBAR ---
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
-    st.info("Wgraj pliki CSV z historią lig (E0.csv, POL.csv itp.), aby nauczyć system.")
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
-    if uploaded_history:
-        if st.button("Aktualizuj Bazę Danych"):
-            with st.spinner("Przetwarzanie..."):
-                count = process_uploaded_history(uploaded_history)
-                if count > 0: st.success(f"✅ Baza zawiera teraz {count} meczów historycznych.")
-                else: st.error("Błąd importu.")
+    if uploaded_history and st.button("Aktualizuj Bazę Danych"):
+        with st.spinner("Przetwarzanie..."):
+            count = process_uploaded_history(uploaded_history)
+            if count > 0: st.success(f"✅ Baza zawiera teraz {count} meczów historycznych.")
+            else: st.error("Błąd importu.")
     leagues = get_leagues_list()
     if leagues:
         st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
@@ -237,12 +257,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
     
     st.sidebar.markdown("---")
-    st.sidebar.header("Buduj Terminarz")
+    st.sidebar.header("Dodaj Mecze")
     
-    # --- ZAKŁADKI: RĘCZNY / OCR / CSV ---
     tab_manual, tab_ocr, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📁 CSV"])
     
-    # 1. RĘCZNY
+    # LOGIKA DODAWANIA (Z auto-zapisem)
+    new_items = []
     with tab_manual:
         sel_league = st.selectbox("Liga:", leagues)
         df_l = get_data_for_league(sel_league)
@@ -250,46 +270,63 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         with st.form("manual_add"):
             h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
             if st.form_submit_button("➕ Dodaj") and h!=a:
-                 st.session_state.fixture_pool.insert(0, {'Home':h, 'Away':a, 'League':sel_league})
-                 st.toast("Dodano!")
+                 new_items.append({'Home':h, 'Away':a, 'League':sel_league})
 
-    # 2. OCR (ZDJĘCIE)
     with tab_ocr:
-        st.caption("Wrzuć screen z Flashscore")
-        uploaded_img = st.file_uploader("Obraz", type=['png', 'jpg', 'jpeg'])
+        uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
         if uploaded_img and st.button("Skanuj"):
             with st.spinner("OCR..."):
                 txt = extract_text_from_image(uploaded_img)
-                new_m, _ = smart_parse_matches_v2(txt, all_teams_list)
-                count = 0
-                for m in new_m:
-                    if not any(x['Home']==m['Home'] and x['Away']==m['Away'] for x in st.session_state.fixture_pool):
-                        st.session_state.fixture_pool.append(m); count+=1
-                if count: st.success(f"Dodano {count} par.")
-                else: st.warning("Brak dopasowań.")
+                m_list, _ = smart_parse_matches_v2(txt, all_teams_list)
+                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)}")
+                else: st.warning("Brak")
 
-    # 3. CSV (FIXTURES)
     with tab_csv:
         uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
         if uploaded_fix and st.button("📥 Import"):
-            new_m, err = parse_fixtures_csv(uploaded_fix)
-            if not err:
-                c = 0
-                for m in new_m:
-                    if not any(x['Home']==m['Home'] and x['Away']==m['Away'] for x in st.session_state.fixture_pool):
-                        st.session_state.fixture_pool.append(m); c+=1
-                st.success(f"Dodano {c} meczów.")
+            m_list, err = parse_fixtures_csv(uploaded_fix)
+            if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
             else: st.error(err)
 
-    if st.sidebar.button("🗑️ Wyczyść Terminarz"):
-        st.session_state.fixture_pool = []; st.session_state.generated_coupon = None; st.rerun()
+    # AKTUALIZACJA PULI PO DODANIU
+    if new_items:
+        for item in new_items:
+            # Unikaj duplikatów
+            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
+                st.session_state.fixture_pool.append(item)
+        save_fixture_pool(st.session_state.fixture_pool) # Zapisz do pliku
+        st.rerun()
 
-    # --- WIDOK GŁÓWNY ---
-    with st.expander(f"📋 Terminarz ({len(st.session_state.fixture_pool)} meczów)", expanded=True):
-        if st.session_state.fixture_pool: st.dataframe(pd.DataFrame(st.session_state.fixture_pool), use_container_width=True)
-        else: st.info("Dodaj mecze w panelu bocznym.")
-        
+    # --- EDYTOR TERMINARZA (NOWOŚĆ!) ---
+    st.subheader("📋 Terminarz (Edytowalny)")
+    
     if st.session_state.fixture_pool:
+        df_pool = pd.DataFrame(st.session_state.fixture_pool)
+        
+        # Interaktywny edytor - pozwala kasować wiersze i edytować dane
+        edited_df = st.data_editor(
+            df_pool, 
+            num_rows="dynamic", # Pozwala dodawać/usuwać wiersze
+            use_container_width=True,
+            key="fixture_editor" 
+        )
+        
+        # Logika aktualizacji (jeśli użytkownik coś zmienił w tabelce)
+        current_data = edited_df.to_dict('records')
+        if current_data != st.session_state.fixture_pool:
+            st.session_state.fixture_pool = current_data
+            save_fixture_pool(current_data) # Zapisz zmiany do pliku
+            # Nie robimy rerun, żeby nie przerywać edycji
+            
+    else:
+        st.info("Pula meczów jest pusta. Dodaj mecze w panelu bocznym.")
+
+    if st.session_state.fixture_pool:
+        if st.button("🗑️ Wyczyść CAŁOŚĆ"):
+            st.session_state.fixture_pool = []
+            save_fixture_pool([])
+            st.rerun()
+
         st.divider()
         c1, c2, c3 = st.columns([1, 2, 1])
         with c1: size = st.slider("Długość", 1, 50, 12)
