@@ -11,21 +11,58 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v12.2 Manager", layout="wide")
+st.set_page_config(page_title="MintStats v12.3 Aliases Fix", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIKI ---
+# --- SŁOWNIK ALIASÓW (TŁUMACZ FLASHSCORE -> BAZA DANYCH) ---
 TEAM_ALIASES = {
+    # --- ANGLIA (Championship / Premier League) ---
+    "Hull City": "Hull",
+    "Hull": "Hull", # Na wypadek gdyby OCR czytał krótko
+    "Watford": "Watford", # Czasem OCR myli 'Watford' z czymś innym
+    "Watford FC": "Watford",
+    "QPR": "QPR", 
+    "Queens Park Rangers": "QPR",
+    "West Brom": "West Brom",
+    "West Bromwich": "West Brom",
+    "Blackburn Rovers": "Blackburn",
+    "Preston North End": "Preston",
+    "Preston": "Preston",
+    "Coventry City": "Coventry",
+    "Stoke City": "Stoke",
+    "Swansea City": "Swansea",
+    "Cardiff City": "Cardiff",
+    "Norwich City": "Norwich",
+    "Luton Town": "Luton",
+    "Derby County": "Derby",
+    "Oxford United": "Oxford",
+    "Sheffield Wed": "Sheffield Weds",
+    "Sheffield Wednesday": "Sheffield Weds",
+    "Plymouth Argyle": "Plymouth",
+    "Portsmouth": "Portsmouth",
+    
+    # --- PORTUGALIA ---
     "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon",
     "Vitoria Guimaraes": "Guimaraes", "V. Guimaraes": "Guimaraes",
-    "FC Porto": "Porto", "Man Utd": "Man United", "Manchester Utd": "Man United",
+    "FC Porto": "Porto", "Rio Ave": "Rio Ave",
+    
+    # --- ANGLIA (GŁÓWNE) ---
+    "Man Utd": "Man United", "Manchester Utd": "Man United",
     "Nottm Forest": "Nott'm Forest", "Wolves": "Wolverhampton",
     "Sheff Utd": "Sheffield United", "Leeds Utd": "Leeds",
+    
+    # --- HISZPANIA ---
     "Athletic Bilbao": "Ath Bilbao", "Atl. Madrid": "Ath Madrid",
     "Atletico Madrid": "Ath Madrid", "Betis": "Real Betis",
+    
+    # --- WŁOCHY ---
     "Inter": "Inter Milan", "AC Milan": "Milan",
+    
+    # --- NIEMCY ---
     "B. Monchengladbach": "M'gladbach", "Monchengladbach": "M'gladbach",
     "Mainz": "Mainz 05", "Frankfurt": "Ein Frankfurt",
+    
+    # --- POLSKA ---
     "Legia Warszawa": "Legia Warsaw", "Śląsk Wrocław": "Slask Wroclaw",
     "Lech Poznań": "Lech Poznan", "Górnik Zabrze": "Gornik Zabrze",
     "Jagiellonia Białystok": "Jagiellonia", "Pogoń Szczecin": "Pogon Szczecin",
@@ -44,7 +81,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE BAZODANOWE (HISTORIA) ---
+# --- FUNKCJE BAZODANOWE ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -76,18 +113,14 @@ def get_all_data():
 # --- ZARZĄDZANIE TERMINARZEM (PERSISTENCE) ---
 def load_fixture_pool():
     if os.path.exists(FIXTURES_DB_FILE):
-        try:
-            return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
-        except:
-            return []
+        try: return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
+        except: return []
     return []
 
 def save_fixture_pool(pool_data):
-    if pool_data:
-        pd.DataFrame(pool_data).to_csv(FIXTURES_DB_FILE, index=False)
+    if pool_data: pd.DataFrame(pool_data).to_csv(FIXTURES_DB_FILE, index=False)
     else:
-        if os.path.exists(FIXTURES_DB_FILE):
-            os.remove(FIXTURES_DB_FILE)
+        if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
 # --- MODEL POISSONA ---
 class PoissonModel:
@@ -157,8 +190,7 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- NARZĘDZIA POMOCNICZE (OCR, PARSING, IMPORT) ---
-
+# --- NARZĘDZIA POMOCNICZE ---
 def clean_ocr_text(text):
     return [re.sub(r'[^a-zA-Z \-]', '', line).strip() for line in text.split('\n') if len(re.sub(r'[^a-zA-Z \-]', '', line).strip()) > 3]
 
@@ -172,14 +204,19 @@ def smart_parse_matches_v2(text_input, available_teams):
     cleaned_lines = clean_ocr_text(text_input); found_teams = []
     for line in cleaned_lines:
         cur = line.strip(); matched = None
+        # 1. Aliasy (Najpierw dokładne, potem zawierające)
         for alias, db_name in TEAM_ALIASES.items():
-            if alias.lower() in cur.lower():
+            if alias.lower() == cur.lower() or (len(alias) > 4 and alias.lower() in cur.lower()):
                  if db_name in available_teams: matched = db_name; break
+        
+        # 2. Fuzzy Match
+        if not matched:
+            match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
+            if match: matched = match[0]
+
         if matched:
             if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
-            continue
-        match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
-        if match and (not found_teams or found_teams[-1] != match[0]): found_teams.append(match[0])
+            
     return [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Original': f"{found_teams[i]} vs {found_teams[i+1]}"} for i in range(0, len(found_teams) - 1, 2)], found_teams
 
 def process_uploaded_history(files):
@@ -223,14 +260,12 @@ def parse_fixtures_csv(file):
 # --- INIT ---
 if 'fixture_pool' not in st.session_state:
     st.session_state.fixture_pool = load_fixture_pool()
-
 if 'generated_coupon' not in st.session_state:
     st.session_state.generated_coupon = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v12.2: Manager Edition")
+st.title("☁️ MintStats v12.3: Aliases Fix")
 
-# --- SIDEBAR ---
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
 
@@ -261,7 +296,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     
     tab_manual, tab_ocr, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📁 CSV"])
     
-    # LOGIKA DODAWANIA (Z auto-zapisem)
     new_items = []
     with tab_manual:
         sel_league = st.selectbox("Liga:", leagues)
@@ -269,8 +303,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
         with st.form("manual_add"):
             h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
-            if st.form_submit_button("➕ Dodaj") and h!=a:
-                 new_items.append({'Home':h, 'Away':a, 'League':sel_league})
+            if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league})
 
     with tab_ocr:
         uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
@@ -288,44 +321,24 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
             else: st.error(err)
 
-    # AKTUALIZACJA PULI PO DODANIU
     if new_items:
         for item in new_items:
-            # Unikaj duplikatów
             if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
                 st.session_state.fixture_pool.append(item)
-        save_fixture_pool(st.session_state.fixture_pool) # Zapisz do pliku
+        save_fixture_pool(st.session_state.fixture_pool)
         st.rerun()
 
-    # --- EDYTOR TERMINARZA (NOWOŚĆ!) ---
     st.subheader("📋 Terminarz (Edytowalny)")
-    
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        
-        # Interaktywny edytor - pozwala kasować wiersze i edytować dane
-        edited_df = st.data_editor(
-            df_pool, 
-            num_rows="dynamic", # Pozwala dodawać/usuwać wiersze
-            use_container_width=True,
-            key="fixture_editor" 
-        )
-        
-        # Logika aktualizacji (jeśli użytkownik coś zmienił w tabelce)
+        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
         current_data = edited_df.to_dict('records')
         if current_data != st.session_state.fixture_pool:
             st.session_state.fixture_pool = current_data
-            save_fixture_pool(current_data) # Zapisz zmiany do pliku
-            # Nie robimy rerun, żeby nie przerywać edycji
+            save_fixture_pool(current_data)
             
-    else:
-        st.info("Pula meczów jest pusta. Dodaj mecze w panelu bocznym.")
-
-    if st.session_state.fixture_pool:
         if st.button("🗑️ Wyczyść CAŁOŚĆ"):
-            st.session_state.fixture_pool = []
-            save_fixture_pool([])
-            st.rerun()
+            st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
 
         st.divider()
         c1, c2, c3 = st.columns([1, 2, 1])
@@ -342,6 +355,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             d = st.session_state.generated_coupon['data']
             st.write("---")
             st.subheader(f"🎫 Kupon: {st.session_state.generated_coupon['strat']}")
-            if d:
-                st.dataframe(pd.DataFrame(d).style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
+            if d: st.dataframe(pd.DataFrame(d).style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
             else: st.warning("Brak pewnych typów.")
+    else: st.info("Pula pusta.")
