@@ -10,7 +10,7 @@ import re
 import io
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v12.0 Cloud", layout="wide")
+st.set_page_config(page_title="MintStats v12.1 Full Cloud", layout="wide")
 
 # --- SŁOWNIKI ---
 TEAM_ALIASES = {
@@ -42,7 +42,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE LOGIKI ---
+# --- FUNKCJE BAZODANOWE ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -53,6 +53,15 @@ def get_leagues_list():
         conn.close()
         return df['LeagueName'].tolist()
     except: return []
+
+def get_data_for_league(league_name):
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        query = "SELECT * FROM all_leagues WHERE LeagueName = ?"
+        df = pd.read_sql(query, conn, params=(league_name,))
+        conn.close()
+        return df
+    except: return pd.DataFrame()
 
 def get_all_data():
     try:
@@ -130,20 +139,40 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- NARZĘDZIA DO IMPORTU (ADMIN) ---
+# --- NARZĘDZIA POMOCNICZE (OCR, PARSING, IMPORT) ---
+
+def clean_ocr_text(text):
+    return [re.sub(r'[^a-zA-Z \-]', '', line).strip() for line in text.split('\n') if len(re.sub(r'[^a-zA-Z \-]', '', line).strip()) > 3]
+
+def extract_text_from_image(uploaded_file):
+    try: 
+        image = Image.open(uploaded_file)
+        return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
+    except Exception as e: return f"Error OCR: {e}"
+
+def smart_parse_matches_v2(text_input, available_teams):
+    cleaned_lines = clean_ocr_text(text_input); found_teams = []
+    for line in cleaned_lines:
+        cur = line.strip(); matched = None
+        for alias, db_name in TEAM_ALIASES.items():
+            if alias.lower() in cur.lower():
+                 if db_name in available_teams: matched = db_name; break
+        if matched:
+            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
+            continue
+        match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
+        if match and (not found_teams or found_teams[-1] != match[0]): found_teams.append(match[0])
+    return [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Original': f"{found_teams[i]} vs {found_teams[i+1]}"} for i in range(0, len(found_teams) - 1, 2)], found_teams
+
 def process_uploaded_history(files):
     all_data = []
     for uploaded_file in files:
         try:
-            # Czytanie pliku z pamięci
             bytes_data = uploaded_file.getvalue()
-            try:
-                df = pd.read_csv(io.BytesIO(bytes_data))
-                if len(df.columns) < 2: raise ValueError
-            except:
-                df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
-            
-            # Czyszczenie
+            try: df = pd.read_csv(io.BytesIO(bytes_data)); 
+            except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
+            if len(df.columns) < 2: continue
+
             df.columns = [c.strip() for c in df.columns]
             req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
             if not all(col in df.columns for col in req): continue
@@ -163,17 +192,18 @@ def process_uploaded_history(files):
         return len(master)
     return 0
 
-def parse_fixtures(file):
+def parse_fixtures_csv(file):
     try:
         df = pd.read_csv(file)
+        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
         matches = []
         for _, row in df.iterrows():
             matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
-        return matches
-    except: return []
+        return matches, None
+    except Exception as e: return [], str(e)
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v12.0: Cloud Edition")
+st.title("☁️ MintStats v12.1: Full Cloud")
 
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = []
 if 'generated_coupon' not in st.session_state: st.session_state.generated_coupon = None
@@ -184,57 +214,80 @@ mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
-    st.info("Ponieważ jesteś w chmurze, baza startuje pusta. Wgraj pliki CSV z historią lig (E0.csv, POL.csv itp.), aby nauczyć system.")
-    
+    st.info("Wgraj pliki CSV z historią lig (E0.csv, POL.csv itp.), aby nauczyć system.")
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
-    
     if uploaded_history:
         if st.button("Aktualizuj Bazę Danych"):
             with st.spinner("Przetwarzanie..."):
                 count = process_uploaded_history(uploaded_history)
-                if count > 0: st.success(f"✅ Sukces! Baza zawiera teraz {count} meczów historycznych.")
-                else: st.error("Nie udało się zaimportować danych.")
-    
-    # Podgląd bazy
+                if count > 0: st.success(f"✅ Baza zawiera teraz {count} meczów historycznych.")
+                else: st.error("Błąd importu.")
     leagues = get_leagues_list()
     if leagues:
-        st.write("---")
-        st.success(f"Dostępne ligi w bazie: {len(leagues)}")
-        st.write(leagues)
-    else:
-        st.warning("Baza danych jest pusta!")
+        st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
+    else: st.warning("Baza pusta!")
 
 elif mode == "2. 🚀 GENERATOR KUPONÓW":
     leagues = get_leagues_list()
-    if not leagues:
-        st.error("⛔ Baza danych jest pusta! Przejdź najpierw do zakładki 'ADMIN' i wgraj historię lig.")
-        st.stop()
+    if not leagues: st.error("⛔ Baza pusta! Idź do ADMINA."); st.stop()
         
     df_all = get_all_data()
     model = PoissonModel(df_all)
     gen = CouponGenerator(model)
+    all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
     
     st.sidebar.markdown("---")
     st.sidebar.header("Buduj Terminarz")
     
-    # Import Fixtures
-    uploaded_fix = st.sidebar.file_uploader("Wgraj fixtures.csv (Terminarz)", type=['csv'])
-    if uploaded_fix and st.sidebar.button("📥 Importuj Terminarz"):
-        new_m = parse_fixtures(uploaded_fix)
-        for m in new_m:
-            if not any(x['Home']==m['Home'] and x['Away']==m['Away'] for x in st.session_state.fixture_pool):
-                st.session_state.fixture_pool.append(m)
-        st.sidebar.success(f"Dodano {len(new_m)} meczów.")
-        
-    if st.sidebar.button("🗑️ Wyczyść Terminarz"):
-        st.session_state.fixture_pool = []
-        st.session_state.generated_coupon = None
-        st.rerun()
+    # --- ZAKŁADKI: RĘCZNY / OCR / CSV ---
+    tab_manual, tab_ocr, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📁 CSV"])
+    
+    # 1. RĘCZNY
+    with tab_manual:
+        sel_league = st.selectbox("Liga:", leagues)
+        df_l = get_data_for_league(sel_league)
+        teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
+        with st.form("manual_add"):
+            h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
+            if st.form_submit_button("➕ Dodaj") and h!=a:
+                 st.session_state.fixture_pool.insert(0, {'Home':h, 'Away':a, 'League':sel_league})
+                 st.toast("Dodano!")
 
-    # Widok Terminarza
+    # 2. OCR (ZDJĘCIE)
+    with tab_ocr:
+        st.caption("Wrzuć screen z Flashscore")
+        uploaded_img = st.file_uploader("Obraz", type=['png', 'jpg', 'jpeg'])
+        if uploaded_img and st.button("Skanuj"):
+            with st.spinner("OCR..."):
+                txt = extract_text_from_image(uploaded_img)
+                new_m, _ = smart_parse_matches_v2(txt, all_teams_list)
+                count = 0
+                for m in new_m:
+                    if not any(x['Home']==m['Home'] and x['Away']==m['Away'] for x in st.session_state.fixture_pool):
+                        st.session_state.fixture_pool.append(m); count+=1
+                if count: st.success(f"Dodano {count} par.")
+                else: st.warning("Brak dopasowań.")
+
+    # 3. CSV (FIXTURES)
+    with tab_csv:
+        uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
+        if uploaded_fix and st.button("📥 Import"):
+            new_m, err = parse_fixtures_csv(uploaded_fix)
+            if not err:
+                c = 0
+                for m in new_m:
+                    if not any(x['Home']==m['Home'] and x['Away']==m['Away'] for x in st.session_state.fixture_pool):
+                        st.session_state.fixture_pool.append(m); c+=1
+                st.success(f"Dodano {c} meczów.")
+            else: st.error(err)
+
+    if st.sidebar.button("🗑️ Wyczyść Terminarz"):
+        st.session_state.fixture_pool = []; st.session_state.generated_coupon = None; st.rerun()
+
+    # --- WIDOK GŁÓWNY ---
     with st.expander(f"📋 Terminarz ({len(st.session_state.fixture_pool)} meczów)", expanded=True):
         if st.session_state.fixture_pool: st.dataframe(pd.DataFrame(st.session_state.fixture_pool), use_container_width=True)
-        else: st.info("Wgraj plik fixtures.csv w panelu bocznym.")
+        else: st.info("Dodaj mecze w panelu bocznym.")
         
     if st.session_state.fixture_pool:
         st.divider()
