@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,10 +12,10 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.8 Hotfix", layout="wide")
+st.set_page_config(page_title="MintStats v13.9 Custom Aliases", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW ---
+# --- SŁOWNIK ALIASÓW (TWOJE POPRAWKI) ---
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
     "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS",
@@ -24,50 +23,69 @@ TEAM_ALIASES = {
     "bars": "Boavista", "boavista": "Boavista", "w tondela": "Tondela",
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
     "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
-    "fc porto": "Porto", "porto": "Porto",
-    "rio ave": "Rio Ave", "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
+    "fc porto": "Porto", "porto": "Porto", "fc porte": "Porto",
+    "rio ave": "Rio Ave", "b biosve": "Rio Ave",
+    "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
-    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional", "b biosve": "Rio Ave", "fc porte": "Porto". 
+    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
     
     # --- ANGLIA ---
     "manchester uta": "Man United", "man uta": "Man United",
     "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
-    "hull": "Hull", "hull city": "Hull", "watford": "Watford", "watford fc": "Watford",
-    "qpr": "QPR", "queens park rangers": "QPR", "west brom": "West Brom", "west bromwich": "West Brom",
-    "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "preston": "Preston", "preston north end": "Preston",
-    "coventry": "Coventry", "coventry city": "Coventry", "stoke": "Stoke", "stoke city": "Stoke",
-    "swansea": "Swansea", "swansea city": "Swansea", "cardiff": "Cardiff", "cardiff city": "Cardiff",
-    "norwich": "Norwich", "norwich city": "Norwich", "luton": "Luton", "luton town": "Luton",
-    "derby": "Derby", "derby county": "Derby", "oxford": "Oxford", "oxford united": "Oxford",
+    "hull": "Hull", "hull city": "Hull", "uit": "Hull",
+    "watford": "Watford", "watford fc": "Watford",
+    "qpr": "QPR", "queens park rangers": "QPR", "opr": "QPR",
+    "west brom": "West Brom", "west bromwich": "West Brom",
+    "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "q blockouen": "Blackburn",
+    "preston": "Preston", "preston north end": "Preston",
+    "coventry": "Coventry", "coventry city": "Coventry", 
+    "stoke": "Stoke", "stoke city": "Stoke",
+    "swansea": "Swansea", "swansea city": "Swansea", 
+    "cardiff": "Cardiff", "cardiff city": "Cardiff",
+    "norwich": "Norwich", "norwich city": "Norwich", 
+    "luton": "Luton", "luton town": "Luton",
+    "derby": "Derby", "derby county": "Derby", 
+    "oxford": "Oxford", "oxford united": "Oxford",
     "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds",
-    "plymouth": "Plymouth", "plymouth argyle": "Plymouth", "portsmouth": "Portsmouth",
-    "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest",
+    "plymouth": "Plymouth", "plymouth argyle": "Plymouth", 
+    "portsmouth": "Portsmouth",
+    "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest", "nottingham": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
-    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
-    "leeds": "Leeds", "leeds utd": "Leeds", "nottingham": "Nott'm Forest", "manchester city": "Man City", "opr": "QPR", "shettiots urs": "Sheffield United",
-    "q blockouen": "Blackburn", "uit": "Hull", "wottora": "Wrexham", "br newer": "Ipswich", 
+    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", "shettiots urs": "Sheffield United",
+    "leeds": "Leeds", "leeds utd": "Leeds", 
+    "manchester city": "Man City", "man city": "Man City",
+    "wottora": "Wrexham", "wrexham": "Wrexham",
+    "br newer": "Ipswich", "ipswich": "Ipswich",
 
     # --- HISZPANIA ---
-    "valiadolia": "Valladolid", "valladolid": "Valladolid", "burgos cr": "Burgos", "burgos": "Burgos",
-    "castetion": "Castellon", "castellon": "Castellon", "racing santander": "Santander", "r santander": "Santander",
+    "valiadolia": "Valladolid", "valladolid": "Valladolid", 
+    "burgos cr": "Burgos", "burgos": "Burgos",
+    "castetion": "Castellon", "castellon": "Castellon", 
+    "racing santander": "Santander", "r santander": "Santander",
     "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
     "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
     "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
     "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
-    "betis": "Real Betis", "real betis": "Real Betis", "celta vigo": "Celta", "cout": "Ceuta", "f zoragozo": "Zaragoza", 
+    "betis": "Real Betis", "real betis": "Real Betis", 
+    "celta vigo": "Celta", "celta": "Celta",
+    "cout": "Ceuta", "ceuta": "Ceuta",
+    "f zoragozo": "Zaragoza", "zaragoza": "Zaragoza", "real zaragoza": "Zaragoza",
     
     # --- WŁOCHY ---
     "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
-    "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", "b parma": "Parma", "parma": "Parma",
-    "y suventus": "Juventus", "juventus": "Juventus", "lecce": "Lecce", "atalanta": "Atalanta",
-    "as roma": "Roma", "roma": "Roma", "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
+    "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", 
+    "b parma": "Parma", "parma": "Parma",
+    "y suventus": "Juventus", "juventus": "Juventus", 
+    "lecce": "Lecce", "atalanta": "Atalanta",
+    "as roma": "Roma", "roma": "Roma", 
+    "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
     
     # --- NIEMCY ---
     "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
-    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt"
+    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt",
 
     # --- FRANCJA ---
-    "parc": "Pau FC",
+    "parc": "Pau FC", "pau": "Pau FC", "pau fc": "Pau FC"
 }
 
 LEAGUE_NAMES = {
@@ -82,7 +100,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE POMOCNICZE I BAZODANOWE (DEFINIOWANE NA GÓRZE) ---
+# --- FUNKCJE POMOCNICZE I BAZODANOWE ---
 
 def get_leagues_list():
     try:
@@ -152,7 +170,8 @@ def clean_ocr_text_debug(text):
     lines = text.split('\n')
     cleaned = []
     for line in lines:
-        normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
+        # Pozwalamy na cyfry, bo czasem OCR miesza nazwy typu "1. FC Koln"
+        normalized = re.sub(r'[^a-zA-Z0-9 ]', ' ', line).strip()
         normalized = re.sub(r'\s+', ' ', normalized)
         if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
         if len(normalized) > 2: cleaned.append(normalized)
@@ -169,6 +188,7 @@ def resolve_team_name(raw_name, available_teams):
     # 1. Alias
     for alias, db_name in TEAM_ALIASES.items():
         if alias == cur: return db_name
+        # Dopasowanie "zawiera się w", ale tylko dla dłuższych aliasów (>3 znaki)
         if len(alias) > 3 and alias in cur: return db_name
     # 2. Fuzzy
     match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
@@ -323,7 +343,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.8: Hotfix & Text Parser")
+st.title("☁️ MintStats v13.9: Custom Aliases")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
