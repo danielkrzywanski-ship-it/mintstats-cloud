@@ -12,43 +12,55 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.2 Fix", layout="wide")
+st.set_page_config(page_title="MintStats v13.3 Debug", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TŁUMACZ) ---
-# Klucz (lewa) = To co widzi na screenie/Flashscore
-# Wartość (prawa) = To jak nazywa się w Twojej bazie (pliki CSV)
+# --- SŁOWNIK ALIASÓW (Bardziej agresywny) ---
+# Klucz (to co może wyjść z OCR, małymi literami) -> Wartość (Baza Danych)
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
-    "AVS": "AFS",            # NAPRAWA AVS -> AFS
-    "AVS Futebol": "AFS",
-    "Braga": "Sp Braga",     # NAPRAWA BRAGI
-    "SC Braga": "Sp Braga",
-    "W Braga": "Sp Braga",   # Częsty błąd OCR (Win Braga)
-    "Sp. Braga": "Sp Braga",
-    "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon", 
-    "Vitoria Guimaraes": "Guimaraes", "V. Guimaraes": "Guimaraes",
-    "FC Porto": "Porto", "Rio Ave": "Rio Ave", "Estoril": "Estoril",
-    "Casa Pia": "Casa Pia", "Gil Vicente": "Gil Vicente",
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", # AVS fix
+    "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "sporting braga": "Sp Braga", # Braga fix
+    "w braga": "Sp Braga", "s c braga": "Sp Braga",
+    
+    "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
+    "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
+    "fc porto": "Porto", "porto": "Porto",
+    "rio ave": "Rio Ave", "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
+    "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
+    "boavista": "Boavista", "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara",
+    "nacional": "Nacional",
     
     # --- ANGLIA ---
-    "Hull City": "Hull", "Hull": "Hull", "Watford": "Watford", "Watford FC": "Watford",
-    "QPR": "QPR", "Queens Park Rangers": "QPR", "West Brom": "West Brom", "West Bromwich": "West Brom",
-    "Blackburn Rovers": "Blackburn", "Preston North End": "Preston", "Preston": "Preston",
-    "Coventry City": "Coventry", "Stoke City": "Stoke", "Swansea City": "Swansea",
-    "Cardiff City": "Cardiff", "Norwich City": "Norwich", "Luton Town": "Luton",
-    "Derby County": "Derby", "Oxford United": "Oxford", "Sheffield Wed": "Sheffield Weds",
-    "Sheffield Wednesday": "Sheffield Weds", "Plymouth Argyle": "Plymouth", "Portsmouth": "Portsmouth",
-    "Man Utd": "Man United", "Manchester Utd": "Man United", "Nottm Forest": "Nott'm Forest",
-    "Wolves": "Wolverhampton", "Sheff Utd": "Sheffield United", "Leeds Utd": "Leeds",
+    "hull": "Hull", "hull city": "Hull",
+    "watford": "Watford", "watford fc": "Watford",
+    "qpr": "QPR", "queens park rangers": "QPR",
+    "west brom": "West Brom", "west bromwich": "West Brom",
+    "blackburn": "Blackburn", "blackburn rovers": "Blackburn",
+    "preston": "Preston", "preston north end": "Preston",
+    "coventry": "Coventry", "coventry city": "Coventry",
+    "stoke": "Stoke", "stoke city": "Stoke",
+    "swansea": "Swansea", "swansea city": "Swansea",
+    "cardiff": "Cardiff", "cardiff city": "Cardiff",
+    "norwich": "Norwich", "norwich city": "Norwich",
+    "luton": "Luton", "luton town": "Luton",
+    "derby": "Derby", "derby county": "Derby",
+    "oxford": "Oxford", "oxford united": "Oxford",
+    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds",
+    "plymouth": "Plymouth", "plymouth argyle": "Plymouth",
+    "portsmouth": "Portsmouth",
+    "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
+    "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest",
+    "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
+    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
+    "leeds": "Leeds", "leeds utd": "Leeds",
     
     # --- INNE ---
-    "Athletic Bilbao": "Ath Bilbao", "Atl. Madrid": "Ath Madrid", "Atletico Madrid": "Ath Madrid",
-    "Betis": "Real Betis", "Inter": "Inter Milan", "AC Milan": "Milan",
-    "B. Monchengladbach": "M'gladbach", "Monchengladbach": "M'gladbach", "Mainz": "Mainz 05",
-    "Frankfurt": "Ein Frankfurt", "Legia Warszawa": "Legia Warsaw", "Śląsk Wrocław": "Slask Wroclaw",
-    "Lech Poznań": "Lech Poznan", "Górnik Zabrze": "Gornik Zabrze", "Jagiellonia Białystok": "Jagiellonia",
-    "Pogoń Szczecin": "Pogon Szczecin", "Cracovia Kraków": "Cracovia", "Raków Częstochowa": "Rakow Czestochowa"
+    "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
+    "betis": "Real Betis", "real betis": "Real Betis",
+    "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
+    "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
+    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt"
 }
 
 LEAGUE_NAMES = {
@@ -198,9 +210,19 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- OCR & HELPERS ---
-def clean_ocr_text(text):
-    return [re.sub(r'[^a-zA-Z \-]', '', line).strip() for line in text.split('\n') if len(re.sub(r'[^a-zA-Z \-]', '', line).strip()) > 3]
+# --- OCR & HELPERS (ULEPSZONE) ---
+def clean_ocr_text_debug(text):
+    # Agresywne czyszczenie: tylko litery i spacje
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        # Zamień wszystko co nie jest literą na spację
+        normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
+        # Usuń podwójne spacje
+        normalized = re.sub(r'\s+', ' ', normalized)
+        if len(normalized) > 2: # Ignoruj śmieci typu "a b"
+            cleaned.append(normalized)
+    return cleaned
 
 def extract_text_from_image(uploaded_file):
     try: 
@@ -208,20 +230,46 @@ def extract_text_from_image(uploaded_file):
         return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
     except Exception as e: return f"Error OCR: {e}"
 
-def smart_parse_matches_v2(text_input, available_teams):
-    cleaned_lines = clean_ocr_text(text_input); found_teams = []
+def smart_parse_matches_v3(text_input, available_teams):
+    cleaned_lines = clean_ocr_text_debug(text_input)
+    found_teams = []
+    
+    debug_log = [] # Log dla użytkownika
+
     for line in cleaned_lines:
-        cur = line.strip(); matched = None
+        cur = line.lower().strip()
+        matched = None
+        
+        # 1. Sprawdź aliasy (Dokładne lub częściowe)
         for alias, db_name in TEAM_ALIASES.items():
-            # Sprawdzenie aliasu: dokładne LUB zawiera (dla przypadków jak 'W Braga')
-            if alias.lower() == cur.lower() or (len(alias) > 3 and alias.lower() in cur.lower()):
-                 if db_name in available_teams: matched = db_name; break
+            # Sprawdź czy alias występuje w linii
+            if alias in cur:
+                 if db_name in available_teams:
+                     matched = db_name
+                     debug_log.append(f"✅ Alias: '{cur}' -> znaleziono '{alias}' -> '{db_name}'")
+                     break
+        
+        # 2. Jeśli brak aliasu, sprawdź Fuzzy Match
         if not matched:
-            match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
-            if match: matched = match[0]
+            # Szukamy bezpośrednio w dostępnych zespołach
+            match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
+            if match:
+                # Odzyskaj oryginalną nazwę (z dużymi literami)
+                for real_name in available_teams:
+                    if real_name.lower() == match[0]:
+                        matched = real_name
+                        debug_log.append(f"🔹 Fuzzy: '{cur}' -> '{real_name}'")
+                        break
+        
         if matched:
-            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
-    return [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Original': f"{found_teams[i]} vs {found_teams[i+1]}"} for i in range(0, len(found_teams) - 1, 2)], found_teams
+            if not found_teams or found_teams[-1] != matched:
+                found_teams.append(matched)
+        else:
+            debug_log.append(f"❌ Nie rozpoznano: '{cur}'")
+
+    # Parowanie drużyn (Home vs Away)
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
+    return matches, debug_log, cleaned_lines
 
 def process_uploaded_history(files):
     all_data = []
@@ -264,7 +312,7 @@ if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.2: AVS & Braga Fix")
+st.title("☁️ MintStats v13.3: Debug Mode")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -307,11 +355,24 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     with tab_ocr:
         uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
         if uploaded_img and st.button("Skanuj"):
-            with st.spinner("OCR..."):
+            with st.spinner("OCR Analiza..."):
                 txt = extract_text_from_image(uploaded_img)
-                m_list, _ = smart_parse_matches_v2(txt, all_teams_list)
-                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)}")
-                else: st.warning("Brak")
+                # Używamy wersji v3 z debugowaniem
+                m_list, debug_logs, raw_lines = smart_parse_matches_v3(txt, all_teams_list)
+                
+                # WYŚWIETLANIE DEBUGOWANIA
+                with st.expander("🕵️ DEBUG OCR - Co widzi system?", expanded=True):
+                    st.write("Skopiuj to jeśli dalej nie działa:")
+                    st.text("\n".join(raw_lines))
+                    st.write("---")
+                    st.write("Logika dopasowania:")
+                    for log in debug_logs:
+                        if "✅" in log: st.success(log)
+                        elif "🔹" in log: st.info(log)
+                        else: st.error(log)
+
+                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)} meczów")
+                else: st.warning("Brak dopasowań.")
     with tab_csv:
         uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
         if uploaded_fix and st.button("📥 Import"):
@@ -326,7 +387,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         save_fixture_pool(st.session_state.fixture_pool)
         st.rerun()
 
-    # --- EDYTOR TERMINARZA (Kasowanie Pojedyncze) ---
+    # --- EDYTOR TERMINARZA ---
     st.subheader("📋 Terminarz")
     st.caption("ℹ️ Aby usunąć mecz: Zaznacz wiersz i naciśnij klawisz Delete.")
     
