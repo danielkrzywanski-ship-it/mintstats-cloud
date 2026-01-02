@@ -12,7 +12,7 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.10 Ultimate Dict", layout="wide")
+st.set_page_config(page_title="MintStats v13.11 OCR Hunter", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIK ALIASÓW (TWOJE AKTUALIZACJE) ---
@@ -24,7 +24,7 @@ TEAM_ALIASES = {
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
     "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
     "fc porto": "Porto", "porto": "Porto", "fc porte": "Porto",
-    "rio ave": "Rio Ave", "b biosve": "Rio Ave",
+    "rio ave": "Rio Ave", "b biosve": "Rio Ave", "8 biosve": "Rio Ave",
     "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
     "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
@@ -32,8 +32,8 @@ TEAM_ALIASES = {
     # --- ANGLIA ---
     "manchester uta": "Man United", "man uta": "Man United",
     "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
-    "hull": "Hull", "hull city": "Hull", "uit": "Hull",
-    "watford": "Watford", "watford fc": "Watford", "wottora": "Watford",
+    "hull": "Hull", "hull city": "Hull", "uit": "Hull", "tui": "Hull",
+    "watford": "Watford", "watford fc": "Watford", "wottora": "Watford", "wottore": "Watford",
     "qpr": "QPR", "queens park rangers": "QPR", "opr": "QPR",
     "west brom": "West Brom", "west bromwich": "West Brom",
     "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "q blockouen": "Blackburn",
@@ -46,16 +46,19 @@ TEAM_ALIASES = {
     "luton": "Luton", "luton town": "Luton",
     "derby": "Derby", "derby county": "Derby", 
     "oxford": "Oxford", "oxford united": "Oxford",
-    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds", "shetticia wea": "Sheffield Weds",
+    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds", 
+    "shetticia wea": "Sheffield Weds", "sheila wea": "Sheffield Weds",
     "plymouth": "Plymouth", "plymouth argyle": "Plymouth", 
     "portsmouth": "Portsmouth",
     "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest", "nottingham": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
-    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", "shettiots urs": "Sheffield United", "shottiois urs": "Sheffield United",
+    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", 
+    "shettiots urs": "Sheffield United", "shottiois urs": "Sheffield United", "shettiois urd": "Sheffield United",
     "leeds": "Leeds", "leeds utd": "Leeds", 
     "manchester city": "Man City", "man city": "Man City",
     "wrexham": "Wrexham",
     "br newer": "Ipswich", "ipswich": "Ipswich",
+    "mitlwatt": "Millwall", "millwall": "Millwall",
 
     # --- HISZPANIA ---
     "valiadolia": "Valladolid", "valladolid": "Valladolid", 
@@ -63,7 +66,7 @@ TEAM_ALIASES = {
     "castetion": "Castellon", "castellon": "Castellon", 
     "racing santander": "Santander", "r santander": "Santander",
     "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
-    "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
+    "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B", "b real sociedad 8": "Sociedad B",
     "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
     "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
     "betis": "Real Betis", "real betis": "Real Betis", 
@@ -85,7 +88,11 @@ TEAM_ALIASES = {
     "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt",
 
     # --- FRANCJA ---
-    "parc": "Pau FC", "pau": "Pau FC", "pau fc": "Pau FC"
+    "parc": "Pau FC", "pau": "Pau FC", "pau fc": "Pau FC",
+    "parisre": "Paris FC", "paris fc": "Paris FC",
+    "b tyon": "Lyon", "lyon": "Lyon", "olympique lyon": "Lyon",
+    "thy morsylia": "Marseille", "marsylia": "Marseille", "marseille": "Marseille",
+    "psc": "Paris SG", "psg": "Paris SG", "paris saint germain": "Paris SG"
 }
 
 LEAGUE_NAMES = {
@@ -341,7 +348,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.10: Ultimate Dict")
+st.title("☁️ MintStats v13.11: OCR Hunter")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
