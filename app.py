@@ -11,7 +11,7 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v12.4 HT/FT", layout="wide")
+st.set_page_config(page_title="MintStats v12.4 HT/FT Fixed", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIKI ---
@@ -131,8 +131,7 @@ class PoissonModel:
                 # HT Stats
                 if has_ht:
                     scored_ht = home['HTHG'].sum() + away['HTAG'].sum()
-                    conceded_ht = home['HTAG'].sum() + away['FTHG'].sum() # Uwaga: HT tracone = HT stracone u siebie + HT stracone na wyjezdzie
-                    # Poprawka: conceded musi brać HTAG dla home i HTHG dla away
+                    conceded_ht = home['HTAG'].sum() + away['FTHG'].sum()
                     conceded_ht_real = home['HTAG'].sum() + away['HTHG'].sum()
                     
                     self.team_stats_ht[team] = {
@@ -150,7 +149,7 @@ class PoissonModel:
         # Half Time Prediction
         xg_h_ht, xg_a_ht = 0.0, 0.0
         if home in self.team_stats_ht and away in self.team_stats_ht:
-            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.10 # Mniejszy bonus atutu boiska do przerwy
+            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.10
             xg_a_ht = self.team_stats_ht[away]['attack'] * self.team_stats_ht[home]['defense'] * self.league_avg_ht
             
         return xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht
@@ -172,12 +171,12 @@ class PoissonModel:
         
         # Gole FT
         under_3_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5])
-        under_4_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]) # NOWOŚĆ
+        under_4_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5])
         over_1_5_ft = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5])
         over_2_5_ft = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5])
         
         # Gole HT
-        over_1_5_ht = np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]) # NOWOŚĆ
+        over_1_5_ht = np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5])
 
         return {
             "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2,
@@ -198,17 +197,15 @@ class CouponGenerator:
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             sel_name, sel_prob = None, 0.0
             
-            # STRATEGIE
             if strategy == "1 (Gospodarz)": sel_name, sel_prob = f"Wygrana {m['Home']}", probs['1']
             elif strategy == "2 (Gość)": sel_name, sel_prob = f"Wygrana {m['Away']}", probs['2']
             elif strategy == "Over 2.5": sel_name, sel_prob = "Over 2.5", probs['Over_2.5_FT']
-            elif strategy == "Under 4.5": sel_name, sel_prob = "Under 4.5", probs['Under_4.5_FT'] # NOWOŚĆ
-            elif strategy == "1. Połowa Over 1.5": sel_name, sel_prob = "HT Over 1.5", probs['Over_1.5_HT'] # NOWOŚĆ
+            elif strategy == "Under 4.5": sel_name, sel_prob = "Under 4.5", probs['Under_4.5_FT']
+            elif strategy == "1. Połowa Over 1.5": sel_name, sel_prob = "HT Over 1.5", probs['Over_1.5_HT']
             elif strategy == "BTS Tak": sel_name, sel_prob = "BTS Tak", probs['BTS_Yes']
             elif strategy == "1X": sel_name, sel_prob = "1X", probs['1X']
             elif strategy == "X2": sel_name, sel_prob = "X2", probs['X2']
             else:
-                # MIESZANY - dodajemy nowe opcje do puli najlepszych typów
                 opts = [
                     ('1', f"Win {m['Home']}", probs['1']), 
                     ('2', f"Win {m['Away']}", probs['2']),
@@ -259,11 +256,9 @@ def process_uploaded_history(files):
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
             
-            # Teraz wymagamy też HTHG i HTAG, ale opcjonalnie (żeby nie wywaliło błędu na starych plikach)
             base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
             if not all(col in df.columns for col in base_req): continue
             
-            # Pobieramy też HT jeśli są
             cols = base_req + ['FTR']
             if 'HTHG' in df.columns and 'HTAG' in df.columns:
                 cols.extend(['HTHG', 'HTAG'])
@@ -343,4 +338,56 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             with st.spinner("OCR..."):
                 txt = extract_text_from_image(uploaded_img)
                 m_list, _ = smart_parse_matches_v2(txt, all_teams_list)
-                if m_list: new_items.extend(m_list); st.success(f"W
+                if m_list: 
+                    new_items.extend(m_list)
+                    st.success(f"Wykryto {len(m_list)}")
+                else: 
+                    st.warning("Brak")
+
+    with tab_csv:
+        uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
+        if uploaded_fix and st.button("📥 Import"):
+            m_list, err = parse_fixtures_csv(uploaded_fix)
+            if not err: 
+                new_items.extend(m_list)
+                st.success(f"Import {len(m_list)}")
+            else: 
+                st.error(err)
+
+    if new_items:
+        for item in new_items:
+            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
+                st.session_state.fixture_pool.append(item)
+        save_fixture_pool(st.session_state.fixture_pool)
+        st.rerun()
+
+    st.subheader("📋 Terminarz")
+    if st.session_state.fixture_pool:
+        df_pool = pd.DataFrame(st.session_state.fixture_pool)
+        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
+        current_data = edited_df.to_dict('records')
+        if current_data != st.session_state.fixture_pool:
+            st.session_state.fixture_pool = current_data
+            save_fixture_pool(current_data)
+            
+        if st.button("🗑️ Wyczyść CAŁOŚĆ"):
+            st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
+
+        st.divider()
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c1: size = st.slider("Długość", 1, 50, 12)
+        with c2: strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "1", "2", "1X", "X2", "BTS Tak"])
+        with c3:
+            st.write(""); st.write("")
+            if st.button("🚀 GENERUJ", type="primary"):
+                res = gen.analyze_pool(st.session_state.fixture_pool, strat)
+                fin = sorted(res, key=lambda x: x['Pewność'], reverse=True)[:size]
+                st.session_state.generated_coupon = {'data': fin, 'strat': strat}
+                
+        if st.session_state.generated_coupon:
+            d = st.session_state.generated_coupon['data']
+            st.write("---")
+            st.subheader(f"🎫 Kupon: {st.session_state.generated_coupon['strat']}")
+            if d: st.dataframe(pd.DataFrame(d).style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
+            else: st.warning("Brak pewnych typów.")
+    else: st.info("Pula pusta.")
