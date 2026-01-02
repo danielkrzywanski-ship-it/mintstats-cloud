@@ -11,62 +11,28 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v12.3 Aliases Fix", layout="wide")
+st.set_page_config(page_title="MintStats v12.4 HT/FT", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TŁUMACZ FLASHSCORE -> BAZA DANYCH) ---
+# --- SŁOWNIKI ---
 TEAM_ALIASES = {
-    # --- ANGLIA (Championship / Premier League) ---
-    "Hull City": "Hull",
-    "Hull": "Hull", # Na wypadek gdyby OCR czytał krótko
-    "Watford": "Watford", # Czasem OCR myli 'Watford' z czymś innym
-    "Watford FC": "Watford",
-    "QPR": "QPR", 
-    "Queens Park Rangers": "QPR",
-    "West Brom": "West Brom",
-    "West Bromwich": "West Brom",
-    "Blackburn Rovers": "Blackburn",
-    "Preston North End": "Preston",
-    "Preston": "Preston",
-    "Coventry City": "Coventry",
-    "Stoke City": "Stoke",
-    "Swansea City": "Swansea",
-    "Cardiff City": "Cardiff",
-    "Norwich City": "Norwich",
-    "Luton Town": "Luton",
-    "Derby County": "Derby",
-    "Oxford United": "Oxford",
-    "Sheffield Wed": "Sheffield Weds",
-    "Sheffield Wednesday": "Sheffield Weds",
-    "Plymouth Argyle": "Plymouth",
-    "Portsmouth": "Portsmouth",
-    
-    # --- PORTUGALIA ---
-    "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon",
-    "Vitoria Guimaraes": "Guimaraes", "V. Guimaraes": "Guimaraes",
-    "FC Porto": "Porto", "Rio Ave": "Rio Ave",
-    
-    # --- ANGLIA (GŁÓWNE) ---
-    "Man Utd": "Man United", "Manchester Utd": "Man United",
-    "Nottm Forest": "Nott'm Forest", "Wolves": "Wolverhampton",
-    "Sheff Utd": "Sheffield United", "Leeds Utd": "Leeds",
-    
-    # --- HISZPANIA ---
-    "Athletic Bilbao": "Ath Bilbao", "Atl. Madrid": "Ath Madrid",
-    "Atletico Madrid": "Ath Madrid", "Betis": "Real Betis",
-    
-    # --- WŁOCHY ---
-    "Inter": "Inter Milan", "AC Milan": "Milan",
-    
-    # --- NIEMCY ---
-    "B. Monchengladbach": "M'gladbach", "Monchengladbach": "M'gladbach",
-    "Mainz": "Mainz 05", "Frankfurt": "Ein Frankfurt",
-    
-    # --- POLSKA ---
-    "Legia Warszawa": "Legia Warsaw", "Śląsk Wrocław": "Slask Wroclaw",
-    "Lech Poznań": "Lech Poznan", "Górnik Zabrze": "Gornik Zabrze",
-    "Jagiellonia Białystok": "Jagiellonia", "Pogoń Szczecin": "Pogon Szczecin",
-    "Cracovia Kraków": "Cracovia", "Raków Częstochowa": "Rakow Czestochowa"
+    "Hull City": "Hull", "Hull": "Hull", "Watford": "Watford", "Watford FC": "Watford",
+    "QPR": "QPR", "Queens Park Rangers": "QPR", "West Brom": "West Brom", "West Bromwich": "West Brom",
+    "Blackburn Rovers": "Blackburn", "Preston North End": "Preston", "Preston": "Preston",
+    "Coventry City": "Coventry", "Stoke City": "Stoke", "Swansea City": "Swansea",
+    "Cardiff City": "Cardiff", "Norwich City": "Norwich", "Luton Town": "Luton",
+    "Derby County": "Derby", "Oxford United": "Oxford", "Sheffield Wed": "Sheffield Weds",
+    "Sheffield Wednesday": "Sheffield Weds", "Plymouth Argyle": "Plymouth", "Portsmouth": "Portsmouth",
+    "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon", "Vitoria Guimaraes": "Guimaraes",
+    "V. Guimaraes": "Guimaraes", "FC Porto": "Porto", "Rio Ave": "Rio Ave",
+    "Man Utd": "Man United", "Manchester Utd": "Man United", "Nottm Forest": "Nott'm Forest",
+    "Wolves": "Wolverhampton", "Sheff Utd": "Sheffield United", "Leeds Utd": "Leeds",
+    "Athletic Bilbao": "Ath Bilbao", "Atl. Madrid": "Ath Madrid", "Atletico Madrid": "Ath Madrid",
+    "Betis": "Real Betis", "Inter": "Inter Milan", "AC Milan": "Milan",
+    "B. Monchengladbach": "M'gladbach", "Monchengladbach": "M'gladbach", "Mainz": "Mainz 05",
+    "Frankfurt": "Ein Frankfurt", "Legia Warszawa": "Legia Warsaw", "Śląsk Wrocław": "Slask Wroclaw",
+    "Lech Poznań": "Lech Poznan", "Górnik Zabrze": "Gornik Zabrze", "Jagiellonia Białystok": "Jagiellonia",
+    "Pogoń Szczecin": "Pogon Szczecin", "Cracovia Kraków": "Cracovia", "Raków Częstochowa": "Rakow Czestochowa"
 }
 
 LEAGUE_NAMES = {
@@ -96,8 +62,7 @@ def get_leagues_list():
 def get_data_for_league(league_name):
     try:
         conn = sqlite3.connect("mintstats.db")
-        query = "SELECT * FROM all_leagues WHERE LeagueName = ?"
-        df = pd.read_sql(query, conn, params=(league_name,))
+        df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
         conn.close()
         return df
     except: return pd.DataFrame()
@@ -110,7 +75,7 @@ def get_all_data():
         return df
     except: return pd.DataFrame()
 
-# --- ZARZĄDZANIE TERMINARZEM (PERSISTENCE) ---
+# --- ZARZĄDZANIE TERMINARZEM ---
 def load_fixture_pool():
     if os.path.exists(FIXTURES_DB_FILE):
         try: return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
@@ -122,49 +87,104 @@ def save_fixture_pool(pool_data):
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
-# --- MODEL POISSONA ---
+# --- MODEL POISSONA (ROZSZERZONY O HT) ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
-        self.team_stats = {}
-        self.league_avg = 1.0
-        if not data.empty: self._calculate_strength()
+        self.team_stats_ft = {} # Full Time Stats
+        self.team_stats_ht = {} # Half Time Stats
+        self.league_avg_ft = 1.0
+        self.league_avg_ht = 1.0
+        
+        if not data.empty:
+            self._calculate_strength()
 
     def _calculate_strength(self):
-        league_goals = self.data['FTHG'].sum() + self.data['FTAG'].sum()
+        # 1. FULL TIME
+        lg_ft = self.data['FTHG'].sum() + self.data['FTAG'].sum()
         matches = len(self.data) * 2
-        self.league_avg = league_goals / matches if matches > 0 else 1.0
+        self.league_avg_ft = lg_ft / matches if matches > 0 else 1.0
+
+        # 2. HALF TIME (Jeśli dostępne)
+        has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
+        if has_ht:
+            lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum()
+            self.league_avg_ht = lg_ht / matches if matches > 0 else 1.0
+        
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
-        stats = {}
+        
         for team in teams:
             home = self.data[self.data['HomeTeam'] == team]
             away = self.data[self.data['AwayTeam'] == team]
-            scored = home['FTHG'].sum() + away['FTAG'].sum()
-            conceded = home['FTAG'].sum() + away['FTHG'].sum()
+            
+            # FT Stats
+            scored_ft = home['FTHG'].sum() + away['FTAG'].sum()
+            conceded_ft = home['FTAG'].sum() + away['FTHG'].sum()
             played = len(home) + len(away)
+            
             if played > 0:
-                stats[team] = {'attack': (scored / played) / self.league_avg, 'defense': (conceded / played) / self.league_avg}
-        self.team_stats = stats
+                self.team_stats_ft[team] = {
+                    'attack': (scored_ft / played) / self.league_avg_ft,
+                    'defense': (conceded_ft / played) / self.league_avg_ft
+                }
+                
+                # HT Stats
+                if has_ht:
+                    scored_ht = home['HTHG'].sum() + away['HTAG'].sum()
+                    conceded_ht = home['HTAG'].sum() + away['FTHG'].sum() # Uwaga: HT tracone = HT stracone u siebie + HT stracone na wyjezdzie
+                    # Poprawka: conceded musi brać HTAG dla home i HTHG dla away
+                    conceded_ht_real = home['HTAG'].sum() + away['HTHG'].sum()
+                    
+                    self.team_stats_ht[team] = {
+                        'attack': (scored_ht / played) / self.league_avg_ht,
+                        'defense': (conceded_ht_real / played) / self.league_avg_ht
+                    }
 
     def predict(self, home, away):
-        if home not in self.team_stats or away not in self.team_stats: return None, None
-        xg_h = self.team_stats[home]['attack'] * self.team_stats[away]['defense'] * self.league_avg * 1.15
-        xg_a = self.team_stats[away]['attack'] * self.team_stats[home]['defense'] * self.league_avg
-        return xg_h, xg_a
+        # Full Time Prediction
+        if home not in self.team_stats_ft or away not in self.team_stats_ft: return None, None, None, None
+        
+        xg_h_ft = self.team_stats_ft[home]['attack'] * self.team_stats_ft[away]['defense'] * self.league_avg_ft * 1.15
+        xg_a_ft = self.team_stats_ft[away]['attack'] * self.team_stats_ft[home]['defense'] * self.league_avg_ft
+        
+        # Half Time Prediction
+        xg_h_ht, xg_a_ht = 0.0, 0.0
+        if home in self.team_stats_ht and away in self.team_stats_ht:
+            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.10 # Mniejszy bonus atutu boiska do przerwy
+            xg_a_ht = self.team_stats_ht[away]['attack'] * self.team_stats_ht[home]['defense'] * self.league_avg_ht
+            
+        return xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht
 
-    def calculate_probs(self, xg_h, xg_a):
+    def calculate_probs(self, xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht):
         max_goals = 8
-        matrix = np.array([[poisson.pmf(i, xg_h) * poisson.pmf(j, xg_a) for j in range(max_goals)] for i in range(max_goals)])
-        prob_1 = np.sum(np.tril(matrix, -1)); prob_x = np.sum(np.diag(matrix)); prob_2 = np.sum(np.triu(matrix, 1))
-        bts_yes = np.sum(matrix[1:, 1:])
-        prob_home_0 = poisson.pmf(0, xg_h); prob_away_0 = poisson.pmf(0, xg_a)
+        
+        # Matrix Full Time
+        mat_ft = np.array([[poisson.pmf(i, xg_h_ft) * poisson.pmf(j, xg_a_ft) for j in range(max_goals)] for i in range(max_goals)])
+        
+        # Matrix Half Time
+        mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
+
+        # Podstawowe FT
+        prob_1 = np.sum(np.tril(mat_ft, -1))
+        prob_x = np.sum(np.diag(mat_ft))
+        prob_2 = np.sum(np.triu(mat_ft, 1))
+        bts_yes = np.sum(mat_ft[1:, 1:])
+        
+        # Gole FT
+        under_3_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5])
+        under_4_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]) # NOWOŚĆ
+        over_1_5_ft = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5])
+        over_2_5_ft = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5])
+        
+        # Gole HT
+        over_1_5_ht = np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]) # NOWOŚĆ
+
         return {
-            "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
+            "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2,
             "BTS_Yes": bts_yes, "BTS_No": 1.0-bts_yes,
-            "Over_1.5": np.sum([matrix[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
-            "Over_2.5": np.sum([matrix[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5]),
-            "Under_3.5": np.sum([matrix[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
-            "Home_Score_Yes": 1.0-prob_home_0, "Home_Score_No": prob_home_0, "Away_Score_Yes": 1.0-prob_away_0, "Away_Score_No": prob_away_0
+            "Over_1.5_FT": over_1_5_ft, "Over_2.5_FT": over_2_5_ft,
+            "Under_3.5_FT": under_3_5, "Under_4.5_FT": under_4_5,
+            "Over_1.5_HT": over_1_5_ht
         }
 
 class CouponGenerator:
@@ -172,25 +192,40 @@ class CouponGenerator:
     def analyze_pool(self, pool, strategy="Mieszany"):
         res = []
         for m in pool:
-            xg_h, xg_a = self.model.predict(m['Home'], m['Away'])
+            xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
             if xg_h is None: continue
-            probs = self.model.calculate_probs(xg_h, xg_a)
+            
+            probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             sel_name, sel_prob = None, 0.0
+            
+            # STRATEGIE
             if strategy == "1 (Gospodarz)": sel_name, sel_prob = f"Wygrana {m['Home']}", probs['1']
             elif strategy == "2 (Gość)": sel_name, sel_prob = f"Wygrana {m['Away']}", probs['2']
-            elif strategy == "Over 2.5": sel_name, sel_prob = "Over 2.5", probs['Over_2.5']
+            elif strategy == "Over 2.5": sel_name, sel_prob = "Over 2.5", probs['Over_2.5_FT']
+            elif strategy == "Under 4.5": sel_name, sel_prob = "Under 4.5", probs['Under_4.5_FT'] # NOWOŚĆ
+            elif strategy == "1. Połowa Over 1.5": sel_name, sel_prob = "HT Over 1.5", probs['Over_1.5_HT'] # NOWOŚĆ
             elif strategy == "BTS Tak": sel_name, sel_prob = "BTS Tak", probs['BTS_Yes']
             elif strategy == "1X": sel_name, sel_prob = "1X", probs['1X']
             elif strategy == "X2": sel_name, sel_prob = "X2", probs['X2']
             else:
-                opts = [('1', f"Win {m['Home']}", probs['1']), ('2', f"Win {m['Away']}", probs['2']),
-                        ('O2.5', "Over 2.5", probs['Over_2.5']), ('BTS', "BTS", probs['BTS_Yes']), ('1X', "1X", probs['1X']), ('X2', "X2", probs['X2'])]
+                # MIESZANY - dodajemy nowe opcje do puli najlepszych typów
+                opts = [
+                    ('1', f"Win {m['Home']}", probs['1']), 
+                    ('2', f"Win {m['Away']}", probs['2']),
+                    ('O2.5', "Over 2.5", probs['Over_2.5_FT']), 
+                    ('U4.5', "Under 4.5", probs['Under_4.5_FT']),
+                    ('HT1.5', "HT Over 1.5", probs['Over_1.5_HT']),
+                    ('BTS', "BTS", probs['BTS_Yes']), 
+                    ('1X', "1X", probs['1X']), 
+                    ('X2', "X2", probs['X2'])
+                ]
                 best = sorted(opts, key=lambda x: x[2], reverse=True)[0]
                 _, sel_name, sel_prob = best
+                
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- NARZĘDZIA POMOCNICZE ---
+# --- OCR & HELPERS ---
 def clean_ocr_text(text):
     return [re.sub(r'[^a-zA-Z \-]', '', line).strip() for line in text.split('\n') if len(re.sub(r'[^a-zA-Z \-]', '', line).strip()) > 3]
 
@@ -204,19 +239,14 @@ def smart_parse_matches_v2(text_input, available_teams):
     cleaned_lines = clean_ocr_text(text_input); found_teams = []
     for line in cleaned_lines:
         cur = line.strip(); matched = None
-        # 1. Aliasy (Najpierw dokładne, potem zawierające)
         for alias, db_name in TEAM_ALIASES.items():
             if alias.lower() == cur.lower() or (len(alias) > 4 and alias.lower() in cur.lower()):
                  if db_name in available_teams: matched = db_name; break
-        
-        # 2. Fuzzy Match
         if not matched:
             match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
             if match: matched = match[0]
-
         if matched:
             if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
-            
     return [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Original': f"{found_teams[i]} vs {found_teams[i+1]}"} for i in range(0, len(found_teams) - 1, 2)], found_teams
 
 def process_uploaded_history(files):
@@ -227,18 +257,22 @@ def process_uploaded_history(files):
             try: df = pd.read_csv(io.BytesIO(bytes_data)); 
             except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
             if len(df.columns) < 2: continue
-
             df.columns = [c.strip() for c in df.columns]
-            req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-            if not all(col in df.columns for col in req): continue
             
-            cols = req + ['FTR']
+            # Teraz wymagamy też HTHG i HTAG, ale opcjonalnie (żeby nie wywaliło błędu na starych plikach)
+            base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+            if not all(col in df.columns for col in base_req): continue
+            
+            # Pobieramy też HT jeśli są
+            cols = base_req + ['FTR']
+            if 'HTHG' in df.columns and 'HTAG' in df.columns:
+                cols.extend(['HTHG', 'HTAG'])
+
             df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
             df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
             df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
             all_data.append(df_cl)
         except Exception as e: st.error(f"Błąd pliku {uploaded_file.name}: {e}")
-    
     if all_data:
         master = pd.concat(all_data, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
@@ -258,24 +292,23 @@ def parse_fixtures_csv(file):
     except Exception as e: return [], str(e)
 
 # --- INIT ---
-if 'fixture_pool' not in st.session_state:
-    st.session_state.fixture_pool = load_fixture_pool()
-if 'generated_coupon' not in st.session_state:
-    st.session_state.generated_coupon = None
+if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
+if 'generated_coupon' not in st.session_state: st.session_state.generated_coupon = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v12.3: Aliases Fix")
+st.title("☁️ MintStats v12.4: HT/FT Engine")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
+    st.info("Wgraj PONOWNIE pliki ligowe, aby system nauczył się wyników do przerwy (HT).")
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
-        with st.spinner("Przetwarzanie..."):
+        with st.spinner("Przetwarzanie (HT+FT)..."):
             count = process_uploaded_history(uploaded_history)
-            if count > 0: st.success(f"✅ Baza zawiera teraz {count} meczów historycznych.")
+            if count > 0: st.success(f"✅ Baza zaktualizowana ({count} meczów).")
             else: st.error("Błąd importu.")
     leagues = get_leagues_list()
     if leagues:
@@ -293,7 +326,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     
     st.sidebar.markdown("---")
     st.sidebar.header("Dodaj Mecze")
-    
     tab_manual, tab_ocr, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📁 CSV"])
     
     new_items = []
@@ -311,50 +343,4 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             with st.spinner("OCR..."):
                 txt = extract_text_from_image(uploaded_img)
                 m_list, _ = smart_parse_matches_v2(txt, all_teams_list)
-                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)}")
-                else: st.warning("Brak")
-
-    with tab_csv:
-        uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
-        if uploaded_fix and st.button("📥 Import"):
-            m_list, err = parse_fixtures_csv(uploaded_fix)
-            if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
-            else: st.error(err)
-
-    if new_items:
-        for item in new_items:
-            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
-                st.session_state.fixture_pool.append(item)
-        save_fixture_pool(st.session_state.fixture_pool)
-        st.rerun()
-
-    st.subheader("📋 Terminarz (Edytowalny)")
-    if st.session_state.fixture_pool:
-        df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
-        current_data = edited_df.to_dict('records')
-        if current_data != st.session_state.fixture_pool:
-            st.session_state.fixture_pool = current_data
-            save_fixture_pool(current_data)
-            
-        if st.button("🗑️ Wyczyść CAŁOŚĆ"):
-            st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
-
-        st.divider()
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c1: size = st.slider("Długość", 1, 50, 12)
-        with c2: strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "1 (Gospodarz)", "2 (Gość)", "1X", "X2", "BTS Tak"])
-        with c3:
-            st.write(""); st.write("")
-            if st.button("🚀 GENERUJ", type="primary"):
-                res = gen.analyze_pool(st.session_state.fixture_pool, strat)
-                fin = sorted(res, key=lambda x: x['Pewność'], reverse=True)[:size]
-                st.session_state.generated_coupon = {'data': fin, 'strat': strat}
-                
-        if st.session_state.generated_coupon:
-            d = st.session_state.generated_coupon['data']
-            st.write("---")
-            st.subheader(f"🎫 Kupon: {st.session_state.generated_coupon['strat']}")
-            if d: st.dataframe(pd.DataFrame(d).style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-            else: st.warning("Brak pewnych typów.")
-    else: st.info("Pula pusta.")
+                if m_list: new_items.extend(m_list); st.success(f"W
