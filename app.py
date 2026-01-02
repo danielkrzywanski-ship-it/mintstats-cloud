@@ -27,7 +27,7 @@ TEAM_ALIASES = {
     "rio ave": "Rio Ave", "b biosve": "Rio Ave",
     "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
-    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
+    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional", "b ars": "AFS",
     
     # --- ANGLIA ---
     "manchester uta": "Man United", "man uta": "Man United",
