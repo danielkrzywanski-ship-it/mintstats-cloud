@@ -10,11 +10,13 @@ import pytesseract
 import re
 import io
 import os
+import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v14.1 Stable", layout="wide")
+st.set_page_config(page_title="MintStats v15.0 Auditor", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
+COUPONS_DB_FILE = "my_coupons.csv"
 
 # --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
@@ -108,7 +110,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE POMOCNICZE ---
+# --- FUNKCJE I BAZA DANYCH ---
 
 def get_leagues_list():
     try:
@@ -148,36 +150,159 @@ def save_fixture_pool(pool_data):
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
-# --- FUNKCJE MANAGERA ---
-def check_team_conflict(home, away, pool):
-    """Sprawdza, czy drużyny już nie grają w puli"""
-    teams_in_pool = set()
-    for m in pool:
-        teams_in_pool.add(m['Home'])
-        teams_in_pool.add(m['Away'])
+# --- ZARZĄDZANIE KUPONAMI ---
+def load_saved_coupons():
+    if os.path.exists(COUPONS_DB_FILE):
+        try: 
+            df = pd.read_csv(COUPONS_DB_FILE)
+            # Konwersja stringa JSON z powrotem na listę
+            coupons = []
+            for _, row in df.iterrows():
+                try:
+                    data_json = row['Data'].replace("'", '"') # Fix single quotes
+                    coupon_data = json.loads(data_json)
+                    coupons.append({
+                        'id': row['ID'],
+                        'name': row['Name'],
+                        'date_created': row['DateCreated'],
+                        'data': coupon_data
+                    })
+                except: continue
+            return coupons
+        except: return []
+    return []
+
+def save_new_coupon(name, coupon_data):
+    coupons = load_saved_coupons()
+    new_id = len(coupons) + 1
     
-    if home in teams_in_pool: return f"⛔ Drużyna {home} jest już na liście!"
-    if away in teams_in_pool: return f"⛔ Drużyna {away} jest już na liście!"
+    # Konwersja na prosty format do zapisu
+    simplified_data = []
+    for bet in coupon_data:
+        simplified_data.append({
+            'Mecz': bet['Mecz'],
+            'Home': bet['Mecz'].split(' - ')[0],
+            'Away': bet['Mecz'].split(' - ')[1],
+            'Typ': bet['Typ'],
+            'Date': bet.get('Date', 'N/A'),
+            'Pewność': bet['Pewność'],
+            'Result': '?' # Domyślnie nieznany
+        })
+        
+    new_entry = {
+        'ID': new_id,
+        'Name': name,
+        'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'Data': json.dumps(simplified_data)
+    }
+    
+    df_new = pd.DataFrame([new_entry])
+    if os.path.exists(COUPONS_DB_FILE):
+        df_new.to_csv(COUPONS_DB_FILE, mode='a', header=False, index=False)
+    else:
+        df_new.to_csv(COUPONS_DB_FILE, index=False)
+
+def check_results_for_coupons():
+    """Główna funkcja SĘDZIEGO"""
+    coupons = load_saved_coupons()
+    if not coupons: return []
+    
+    conn = sqlite3.connect("mintstats.db")
+    df_history = pd.read_sql("SELECT * FROM all_leagues", conn)
+    conn.close()
+    
+    # Format daty w bazie to zazwyczaj timestamp, musimy uważać
+    # df_history['Date'] jest datetime64
+    
+    updated_coupons = []
+    
+    for coupon in coupons:
+        bets = coupon['data']
+        processed_bets = []
+        for bet in bets:
+            status = bet.get('Result', '?')
+            
+            # Jeśli już rozliczony, pomiń
+            if status in ['✅', '❌']:
+                processed_bets.append(bet)
+                continue
+                
+            # Szukamy meczu w bazie
+            # Potrzebujemy: HomeTeam, AwayTeam i daty (opcjonalnie, dla precyzji)
+            h, a = bet['Home'], bet['Away']
+            
+            # Filtrowanie
+            match = df_history[
+                (df_history['HomeTeam'] == h) & 
+                (df_history['AwayTeam'] == a)
+            ]
+            
+            if not match.empty:
+                # Mamy wynik!
+                row = match.iloc[0]
+                res = evaluate_bet(bet['Typ'], row)
+                bet['Result'] = '✅' if res else '❌'
+                bet['Score'] = f"{int(row['FTHG'])}:{int(row['FTAG'])}"
+            
+            processed_bets.append(bet)
+        
+        coupon['data'] = processed_bets
+        updated_coupons.append(coupon)
+        
+    # Zapisz zaktualizowane
+    df_save = pd.DataFrame([{
+        'ID': c['id'],
+        'Name': c['name'],
+        'DateCreated': c['date_created'],
+        'Data': json.dumps(c['data'])
+    } for c in updated_coupons])
+    
+    df_save.to_csv(COUPONS_DB_FILE, index=False)
+    return updated_coupons
+
+def evaluate_bet(bet_type, row):
+    """Logika Sędziego - czy typ wszedł?"""
+    fthg, ftag = row['FTHG'], row['FTAG']
+    goals = fthg + ftag
+    
+    try:
+        if bet_type.startswith("Win"): # Win Home / Win Away
+            if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
+            if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
+        
+        if bet_type == "Over 2.5": return goals > 2.5
+        if bet_type == "Under 4.5": return goals <= 4.5
+        if bet_type == "BTS": return fthg > 0 and ftag > 0
+        if bet_type == "1X": return fthg >= ftag
+        if bet_type == "X2": return ftag >= fthg
+        
+        if "HT Over 1.5" in bet_type:
+            if 'HTHG' in row and 'HTAG' in row:
+                return (row['HTHG'] + row['HTAG']) > 1.5
+            return False # Brak danych HT
+            
+    except: return False
+    return False
+
+# --- MANAGERSKIE ---
+def check_team_conflict(home, away, pool):
+    # W v15.0 blokujemy tylko identyczne pary
+    for m in pool:
+        if m['Home'] == home and m['Away'] == away:
+            return f"⛔ Ten mecz ({home} vs {away}) jest już na liście!"
     return None
 
 def clean_expired_matches(pool):
-    """Usuwa mecze starsze niż dzisiaj"""
     today_str = datetime.today().strftime('%Y-%m-%d')
     new_pool = []
     removed = 0
     for m in pool:
         if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan':
-            new_pool.append(m)
-            continue
+            new_pool.append(m); continue
         try:
-            # Porównujemy jako stringi YYYY-MM-DD
-            if str(m['Date']) >= today_str:
-                new_pool.append(m)
-            else:
-                removed += 1
-        except:
-            new_pool.append(m)
-            
+            if str(m['Date']) >= today_str: new_pool.append(m)
+            else: removed += 1
+        except: new_pool.append(m)
     return new_pool, removed
 
 def process_uploaded_history(files):
@@ -402,10 +527,10 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v14.1: Stable")
+st.title("☁️ MintStats v15.0: The Auditor")
 
 st.sidebar.header("Panel Sterowania")
-mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
+mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
@@ -493,26 +618,21 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         added_count = 0
         errors = []
         for item in new_items:
-            # Sprawdź konflikt
             conflict_msg = check_team_conflict(item['Home'], item['Away'], st.session_state.fixture_pool)
-            if conflict_msg:
-                errors.append(conflict_msg)
+            if conflict_msg: errors.append(conflict_msg)
             else:
                 st.session_state.fixture_pool.append(item)
                 added_count += 1
-        
         save_fixture_pool(st.session_state.fixture_pool)
-        
         if added_count > 0: st.toast(f"Dodano {added_count} meczów!")
         if errors:
-            with st.expander("⚠️ Pominięto (Konflikty)", expanded=True):
+            with st.expander("⚠️ Pominięto (Duplikaty)", expanded=True):
                 for e in errors: st.warning(e)
         st.rerun()
 
     # --- EDYTOR I GENERATOR ---
     st.subheader("📋 Terminarz")
     
-    # Przycisk czyszczenia starych
     col_clean, col_clear = st.columns(2)
     with col_clean:
         if st.button("🧹 Usuń przeterminowane mecze"):
@@ -530,15 +650,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
         if 'Date' not in df_pool.columns: df_pool['Date'] = datetime.today().strftime('%Y-%m-%d')
         
-        # --- FIX: WYRZUCONO COLUMN CONFIG DLA DATY ---
-        edited_df = st.data_editor(
-            df_pool, 
-            num_rows="dynamic", 
-            use_container_width=True, 
-            key="fixture_editor"
-        )
-        
-        # Formatowanie daty przy zapisie (żeby stringi się zgadzały)
+        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
         formatted_records = []
         for r in edited_df.to_dict('records'):
             if isinstance(r['Date'], (datetime, date)):
@@ -564,22 +676,17 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         if st.button("🚀 GENERUJ", type="primary"):
             analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
             
-            # --- LOGIKA SORTOWANIA DLA SMART MIX ---
             if strat == "Smart Mix (Zróżnicowany)":
-                # Dzielimy na koszyki
                 cat_win = sorted([x for x in analyzed_pool if x['Kategoria'] == 'WIN'], key=lambda x: x['Pewność'], reverse=True)
                 cat_goal = sorted([x for x in analyzed_pool if x['Kategoria'] == 'GOAL'], key=lambda x: x['Pewność'], reverse=True)
                 cat_safe = sorted([x for x in analyzed_pool if x['Kategoria'] == 'SAFE'], key=lambda x: x['Pewność'], reverse=True)
-                
                 mixed_list = []
-                # Bierzemy na zmianę: WIN, GOAL, SAFE, WIN, GOAL, SAFE...
                 max_len = max(len(cat_win), len(cat_goal), len(cat_safe))
                 for i in range(max_len):
                     if i < len(cat_win): mixed_list.append(cat_win[i])
                     if i < len(cat_goal): mixed_list.append(cat_goal[i])
                     if i < len(cat_safe): mixed_list.append(cat_safe[i])
-                
-                final_pool = mixed_list # To jest nasza posortowana lista
+                final_pool = mixed_list
             else:
                 final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
 
@@ -596,15 +703,58 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
         if st.session_state.generated_coupons:
             st.write("---")
+            if st.button("💾 Zapisz Wygenerowane Kupony"):
+                for kupon in st.session_state.generated_coupons:
+                    save_new_coupon(kupon['name'], kupon['data'])
+                st.success("Zapisano w Historii!")
+            
             for kupon in st.session_state.generated_coupons:
                 with st.container():
                     st.subheader(f"🎫 {kupon['name']}")
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
-                        # Ukrywamy kolumnę Kategoria dla czytelności, ale używamy jej w logice
                         disp_cols = ['Date', 'Mecz', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
                         st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
                     else: st.warning("Brak typów.")
                     st.write("---")
     else: st.info("Pula pusta.")
+
+elif mode == "3. 📜 MOJE KUPONY":
+    st.title("📜 Historia Kuponów")
+    
+    st.info("ℹ️ Aby system rozliczył kupony, wejdź w ADMIN i wgraj aktualne pliki CSV z ligami (np. E0.csv).")
+    
+    if st.button("🔄 Sprawdź Wyniki (Rozlicz Kupony)"):
+        with st.spinner("Sędzia sprawdza wyniki..."):
+            updated = check_results_for_coupons()
+            if updated: st.success("Zaktualizowano statusy!")
+            else: st.warning("Brak kuponów do sprawdzenia lub brak danych w bazie.")
+            
+    coupons = load_saved_coupons()
+    
+    if coupons:
+        for c in reversed(coupons): # Najnowsze na górze
+            with st.expander(f"🎫 {c['name']} (Utworzono: {c['date_created']})", expanded=False):
+                df_c = pd.DataFrame(c['data'])
+                
+                # Kolorowanie wyników
+                def highlight_result(val):
+                    color = 'white'
+                    if val == '✅': color = '#90EE90' # Light green
+                    elif val == '❌': color = '#FFB6C1' # Light pink
+                    return f'background-color: {color}'
+
+                st.dataframe(df_c.style.applymap(highlight_result, subset=['Result']), use_container_width=True)
+                
+                # Statystyki
+                wins = len(df_c[df_c['Result'] == '✅'])
+                losses = len(df_c[df_c['Result'] == '❌'])
+                pending = len(df_c[df_c['Result'] == '?'])
+                st.caption(f"✅ Trafione: {wins} | ❌ Pudła: {losses} | ⏳ Oczekujące: {pending}")
+                
+        if st.button("🗑️ Wyczyść Historię"):
+            if os.path.exists(COUPONS_DB_FILE): os.remove(COUPONS_DB_FILE)
+            st.rerun()
+    else:
+        st.info("Nie zapisałeś jeszcze żadnych kuponów.")
