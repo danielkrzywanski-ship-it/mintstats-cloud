@@ -12,27 +12,15 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.6 Typo Killer", layout="wide")
+st.set_page_config(page_title="MintStats v13.7 Text Parser", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TŁUMACZ BŁĘDÓW) ---
+# --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
-    "avs": "AFS",            # AVS
-    "avs futebol": "AFS",
-    "afs": "AFS",
-    "a v s": "AFS",          # Jeśli OCR rozdzieli litery
-    
-    "brag": "Sp Braga",      # BRAGA
-    "braga": "Sp Braga", 
-    "sc braga": "Sp Braga",
-    "sp braga": "Sp Braga",
-    "w braga": "Sp Braga",
-    
-    "bars": "Boavista",      # BOAVISTA
-    "boavista": "Boavista",
-    "w tondela": "Tondela",
-    
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS",
+    "brag": "Sp Braga", "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "w braga": "Sp Braga",
+    "bars": "Boavista", "boavista": "Boavista", "w tondela": "Tondela",
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
     "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
     "fc porto": "Porto", "porto": "Porto",
@@ -40,38 +28,26 @@ TEAM_ALIASES = {
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
     "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
     
-    # --- ANGLIA (MAN UTD FIX) ---
-    "manchester uta": "Man United",  # <--- FIX DLA CIEBIE
-    "man uta": "Man United",
+    # --- ANGLIA ---
+    "manchester uta": "Man United", "man uta": "Man United",
     "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
-    
-    "hull": "Hull", "hull city": "Hull",
-    "watford": "Watford", "watford fc": "Watford",
-    "qpr": "QPR", "queens park rangers": "QPR",
-    "west brom": "West Brom", "west bromwich": "West Brom",
-    "blackburn": "Blackburn", "blackburn rovers": "Blackburn",
-    "preston": "Preston", "preston north end": "Preston",
-    "coventry": "Coventry", "coventry city": "Coventry",
-    "stoke": "Stoke", "stoke city": "Stoke",
-    "swansea": "Swansea", "swansea city": "Swansea",
-    "cardiff": "Cardiff", "cardiff city": "Cardiff",
-    "norwich": "Norwich", "norwich city": "Norwich",
-    "luton": "Luton", "luton town": "Luton",
-    "derby": "Derby", "derby county": "Derby",
-    "oxford": "Oxford", "oxford united": "Oxford",
+    "hull": "Hull", "hull city": "Hull", "watford": "Watford", "watford fc": "Watford",
+    "qpr": "QPR", "queens park rangers": "QPR", "west brom": "West Brom", "west bromwich": "West Brom",
+    "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "preston": "Preston", "preston north end": "Preston",
+    "coventry": "Coventry", "coventry city": "Coventry", "stoke": "Stoke", "stoke city": "Stoke",
+    "swansea": "Swansea", "swansea city": "Swansea", "cardiff": "Cardiff", "cardiff city": "Cardiff",
+    "norwich": "Norwich", "norwich city": "Norwich", "luton": "Luton", "luton town": "Luton",
+    "derby": "Derby", "derby county": "Derby", "oxford": "Oxford", "oxford united": "Oxford",
     "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds",
-    "plymouth": "Plymouth", "plymouth argyle": "Plymouth",
-    "portsmouth": "Portsmouth",
+    "plymouth": "Plymouth", "plymouth argyle": "Plymouth", "portsmouth": "Portsmouth",
     "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
     "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
     "leeds": "Leeds", "leeds utd": "Leeds",
 
     # --- HISZPANIA ---
-    "valiadolia": "Valladolid", "valladolid": "Valladolid",
-    "burgos cr": "Burgos", "burgos": "Burgos",
-    "castetion": "Castellon", "castellon": "Castellon",
-    "racing santander": "Santander", "r santander": "Santander",
+    "valiadolia": "Valladolid", "valladolid": "Valladolid", "burgos cr": "Burgos", "burgos": "Burgos",
+    "castetion": "Castellon", "castellon": "Castellon", "racing santander": "Santander", "r santander": "Santander",
     "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
     "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
     "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
@@ -82,8 +58,7 @@ TEAM_ALIASES = {
     "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
     "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", "b parma": "Parma", "parma": "Parma",
     "y suventus": "Juventus", "juventus": "Juventus", "lecce": "Lecce", "atalanta": "Atalanta",
-    "as roma": "Roma", "roma": "Roma",
-    "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
+    "as roma": "Roma", "roma": "Roma", "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
     
     # --- NIEMCY ---
     "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
@@ -102,7 +77,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE BAZODANOWE ---
+# --- FUNKCJE POMOCNICZE ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -130,7 +105,6 @@ def get_all_data():
         return df
     except: return pd.DataFrame()
 
-# --- ZARZĄDZANIE TERMINARZEM ---
 def load_fixture_pool():
     if os.path.exists(FIXTURES_DB_FILE):
         try: return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
@@ -237,6 +211,58 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
+# --- LOGIKA PARSOWANIA TEKSTU (TEXT PARSER) ---
+def resolve_team_name(raw_name, available_teams):
+    cur = raw_name.lower().strip()
+    # 1. Alias
+    for alias, db_name in TEAM_ALIASES.items():
+        if alias == cur: return db_name
+        # Jeśli alias jest długi i zawiera się w nazwie (np. "manchester uta" w "manchester uta - liverpool")
+        if len(alias) > 3 and alias in cur: return db_name
+    
+    # 2. Fuzzy
+    match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
+    if match:
+        for real_name in available_teams:
+            if real_name.lower() == match[0]: return real_name
+    return None
+
+def parse_raw_text(text_input, available_teams):
+    lines = text_input.split('\n')
+    found_matches = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        
+        # Próba znalezienia separatora (myślnik lub vs)
+        # Flashscore często kopiuje się jako: "Arsenal - Liverpool 2.10 3.50..."
+        # Musimy znaleźć separator, który dzieli TEKST (nie liczby)
+        
+        # Usuwamy najpierw godziny (np. 15:00)
+        line = re.sub(r'\d{2}:\d{2}', '', line)
+        
+        parts = []
+        if " - " in line: parts = line.split(" - ")
+        elif " vs " in line: parts = line.split(" vs ")
+        
+        if len(parts) >= 2:
+            raw_home = parts[0]
+            # Prawa strona może zawierać kursy, musimy wziąć tylko początek (nazwę drużyny)
+            raw_away_chunk = parts[1]
+            
+            # Czyścimy prawą stronę z cyfr i kursów
+            raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0] # Bierze tekst przed pierwszą liczbą
+            
+            # Oczyszczamy z białych znaków
+            home_team = resolve_team_name(raw_home, available_teams)
+            away_team = resolve_team_name(raw_away, available_teams)
+            
+            if home_team and away_team and home_team != away_team:
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import'})
+
+    return found_matches
+
 # --- OCR & HELPERS ---
 def clean_ocr_text_debug(text):
     lines = text.split('\n')
@@ -258,34 +284,175 @@ def smart_parse_matches_v3(text_input, available_teams):
     cleaned_lines = clean_ocr_text_debug(text_input)
     found_teams = []
     debug_log = []
-
     for line in cleaned_lines:
         cur = line.lower().strip()
-        matched = None
-        for alias, db_name in TEAM_ALIASES.items():
-            if alias == cur or (len(alias) > 3 and alias in cur):
-                 if db_name in available_teams:
-                     matched = db_name
-                     debug_log.append(f"✅ Alias: '{cur}' -> '{alias}' -> '{db_name}'")
-                     break
-        
-        if not matched:
-            match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
-            if match:
-                for real_name in available_teams:
-                    if real_name.lower() == match[0]:
-                        matched = real_name
-                        debug_log.append(f"🔹 Fuzzy: '{cur}' -> '{real_name}'")
-                        break
-        
+        matched = resolve_team_name(cur, available_teams) # Używamy tej samej funkcji co Text Parser
         if matched:
             if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
-        else: debug_log.append(f"❌ '{cur}'")
-
+            debug_log.append(f"✅ '{cur}' -> '{matched}'")
+        else:
+            debug_log.append(f"❌ '{cur}'")
     matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
     return matches, debug_log, cleaned_lines
 
-def process_uploaded_history(files):
+def parse_fixtures_csv(file):
+    try:
+        df = pd.read_csv(file)
+        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
+        matches = []
+        for _, row in df.iterrows():
+            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
+        return matches, None
+    except Exception as e: return [], str(e)
+
+# --- INIT ---
+if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
+if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
+if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
+
+# --- INTERFEJS ---
+st.title("☁️ MintStats v13.7: Text Parser")
+
+st.sidebar.header("Panel Sterowania")
+mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
+
+if mode == "1. 🛠️ ADMIN (Baza Danych)":
+    st.subheader("🛠️ Zarządzanie Bazą Danych")
+    uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
+    if uploaded_history and st.button("Aktualizuj Bazę Danych"):
+        with st.spinner("Przetwarzanie..."):
+            count = process_uploaded_history(uploaded_history) # Ta funkcja musi być zdefiniowana (jest w kodzie wyżej, ale tu dla kompletności upewnij się że jest)
+            if count > 0: st.success(f"✅ Baza zaktualizowana ({count} meczów).")
+            else: st.error("Błąd importu.")
+    leagues = get_leagues_list()
+    if leagues:
+        st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
+    else: st.warning("Baza pusta!")
+
+elif mode == "2. 🚀 GENERATOR KUPONÓW":
+    leagues = get_leagues_list()
+    if not leagues: st.error("⛔ Baza pusta!"); st.stop()
+        
+    df_all = get_all_data()
+    model = PoissonModel(df_all)
+    gen = CouponGenerator(model)
+    all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
+    
+    # --- DODAWANIE MECZÓW ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("Dodaj Mecze")
+    tab_manual, tab_ocr, tab_text, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📝 Wklej Tekst", "📁 CSV"])
+    
+    new_items = []
+    
+    # 1. RĘCZNY
+    with tab_manual:
+        sel_league = st.selectbox("Liga:", leagues)
+        df_l = get_data_for_league(sel_league)
+        teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
+        with st.form("manual_add"):
+            h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
+            if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league})
+    
+    # 2. OCR
+    with tab_ocr:
+        uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
+        if uploaded_img and st.button("Skanuj"):
+            with st.spinner("OCR Analiza..."):
+                txt = extract_text_from_image(uploaded_img)
+                m_list, debug_logs, raw_lines = smart_parse_matches_v3(txt, all_teams_list)
+                st.session_state.last_ocr_debug = {'raw': raw_lines, 'logs': debug_logs}
+                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)} meczów")
+                else: st.warning("Brak dopasowań.")
+        if st.session_state.last_ocr_debug:
+            with st.expander("🕵️ DEBUG OCR"):
+                st.text("\n".join(st.session_state.last_ocr_debug['raw']))
+                for log in st.session_state.last_ocr_debug['logs']:
+                    if "✅" in log: st.success(log)
+                    elif "🔹" in log: st.info(log)
+                    else: st.error(log)
+            if st.button("Wyczyść Debug"): st.session_state.last_ocr_debug = None; st.rerun()
+
+    # 3. TEXT PARSER (NOWOŚĆ)
+    with tab_text:
+        st.info("💡 Skopiuj listę meczów z Flashscore (Ctrl+C) i wklej tutaj.")
+        raw_text_input = st.text_area("Wklej mecze (np. 'Braga - Benfica')", height=150)
+        if st.button("🔍 Analizuj Tekst"):
+            parsed = parse_raw_text(raw_text_input, all_teams_list)
+            if parsed:
+                new_items.extend(parsed)
+                st.success(f"✅ Znaleziono {len(parsed)} par!")
+                # Pokaż co znalazł
+                for p in parsed: st.caption(f"{p['Home']} vs {p['Away']}")
+            else:
+                st.error("Nie udało się rozpoznać par. Upewnij się, że kopiujesz w formacie 'Drużyna A - Drużyna B'.")
+
+    # 4. CSV
+    with tab_csv:
+        uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
+        if uploaded_fix and st.button("📥 Import"):
+            m_list, err = parse_fixtures_csv(uploaded_fix)
+            if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
+            else: st.error(err)
+
+    if new_items:
+        for item in new_items:
+            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
+                st.session_state.fixture_pool.append(item)
+        save_fixture_pool(st.session_state.fixture_pool)
+        st.rerun()
+
+    # --- EDYTOR I GENERATOR ---
+    st.subheader("📋 Terminarz")
+    if st.session_state.fixture_pool:
+        df_pool = pd.DataFrame(st.session_state.fixture_pool)
+        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
+        if edited_df.to_dict('records') != st.session_state.fixture_pool:
+            st.session_state.fixture_pool = edited_df.to_dict('records')
+            save_fixture_pool(st.session_state.fixture_pool)
+        if st.button("🗑️ Wyczyść WSZYSTKO"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
+
+        st.divider()
+        st.header("🎲 Generator Kuponów")
+        c1, c2, c3 = st.columns(3)
+        with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
+        with c2: strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "1", "2", "1X", "X2", "BTS Tak"])
+        with c3:
+            if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
+            else:
+                num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
+                events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
+                chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
+
+        if st.button("🚀 GENERUJ", type="primary"):
+            analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
+            analyzed_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+            st.session_state.generated_coupons = [] 
+            if gen_mode == "Jeden Pewny Kupon":
+                st.session_state.generated_coupons.append({"name": "Top Pewniaki", "data": analyzed_pool[:coupon_len]})
+            else: 
+                candidate_pool = analyzed_pool[:chaos_factor]
+                if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
+                else:
+                    for i in range(num_coupons):
+                        random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
+                        st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
+
+        if st.session_state.generated_coupons:
+            st.write("---")
+            for kupon in st.session_state.generated_coupons:
+                with st.container():
+                    st.subheader(f"🎫 {kupon['name']} ({strat})")
+                    df_k = pd.DataFrame(kupon['data'])
+                    if not df_k.empty:
+                        st.dataframe(df_k.style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
+                        st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
+                    else: st.warning("Brak typów.")
+                    st.write("---")
+    else: st.info("Pula pusta.")
+
+# --- DODAĆ FUNKCJĘ PROCESS UPLOADED HISTORY JEŚLI JEJ BRAKUJE ---
+def process_uploaded_history(files): # Kopia funkcji dla pewności
     all_data = []
     for uploaded_file in files:
         try:
@@ -310,155 +477,3 @@ def process_uploaded_history(files):
         conn.close()
         return len(master)
     return 0
-
-def parse_fixtures_csv(file):
-    try:
-        df = pd.read_csv(file)
-        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
-        matches = []
-        for _, row in df.iterrows():
-            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
-        return matches, None
-    except Exception as e: return [], str(e)
-
-# --- INIT ---
-if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
-if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
-if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
-
-# --- INTERFEJS ---
-st.title("☁️ MintStats v13.6: Typo Killer")
-
-st.sidebar.header("Panel Sterowania")
-mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
-
-if mode == "1. 🛠️ ADMIN (Baza Danych)":
-    st.subheader("🛠️ Zarządzanie Bazą Danych")
-    uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
-    if uploaded_history and st.button("Aktualizuj Bazę Danych"):
-        with st.spinner("Przetwarzanie..."):
-            count = process_uploaded_history(uploaded_history)
-            if count > 0: st.success(f"✅ Baza zaktualizowana ({count} meczów).")
-            else: st.error("Błąd importu.")
-    leagues = get_leagues_list()
-    if leagues:
-        st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
-    else: st.warning("Baza pusta!")
-
-elif mode == "2. 🚀 GENERATOR KUPONÓW":
-    leagues = get_leagues_list()
-    if not leagues: st.error("⛔ Baza pusta!"); st.stop()
-        
-    df_all = get_all_data()
-    model = PoissonModel(df_all)
-    gen = CouponGenerator(model)
-    all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
-    
-    # --- DODAWANIE MECZÓW ---
-    st.sidebar.markdown("---")
-    st.sidebar.header("Dodaj Mecze")
-    tab_manual, tab_ocr, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📁 CSV"])
-    
-    new_items = []
-    with tab_manual:
-        sel_league = st.selectbox("Liga:", leagues)
-        df_l = get_data_for_league(sel_league)
-        teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
-        with st.form("manual_add"):
-            h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
-            if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league})
-            
-    with tab_ocr:
-        uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
-        if uploaded_img and st.button("Skanuj"):
-            with st.spinner("OCR Analiza..."):
-                txt = extract_text_from_image(uploaded_img)
-                m_list, debug_logs, raw_lines = smart_parse_matches_v3(txt, all_teams_list)
-                
-                st.session_state.last_ocr_debug = {'raw': raw_lines, 'logs': debug_logs}
-                if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)} meczów")
-                else: st.warning("Brak dopasowań.")
-
-        if st.session_state.last_ocr_debug:
-            with st.expander("🕵️ DEBUG OCR - Co widzi system?", expanded=True):
-                st.text("\n".join(st.session_state.last_ocr_debug['raw']))
-                st.divider()
-                st.write("**Logika:**")
-                for log in st.session_state.last_ocr_debug['logs']:
-                    if "✅" in log: st.success(log)
-                    elif "🔹" in log: st.info(log)
-                    else: st.error(log)
-            if st.button("Wyczyść Debug"):
-                st.session_state.last_ocr_debug = None
-                st.rerun()
-
-    with tab_csv:
-        uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
-        if uploaded_fix and st.button("📥 Import"):
-            m_list, err = parse_fixtures_csv(uploaded_fix)
-            if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
-            else: st.error(err)
-
-    if new_items:
-        for item in new_items:
-            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
-                st.session_state.fixture_pool.append(item)
-        save_fixture_pool(st.session_state.fixture_pool)
-        st.rerun()
-
-    # --- EDYTOR TERMINARZA ---
-    st.subheader("📋 Terminarz")
-    if st.session_state.fixture_pool:
-        df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
-        
-        if edited_df.to_dict('records') != st.session_state.fixture_pool:
-            st.session_state.fixture_pool = edited_df.to_dict('records')
-            save_fixture_pool(st.session_state.fixture_pool)
-            
-        if st.button("🗑️ Wyczyść WSZYSTKO"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
-
-        st.divider()
-        st.header("🎲 Generator Kuponów")
-        col_conf1, col_conf2, col_conf3 = st.columns(3)
-        with col_conf1:
-            gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon (Top X)", "System Rozpisowy (Wiele kuponów)"])
-        with col_conf2:
-            strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "1", "2", "1X", "X2", "BTS Tak"])
-        
-        if gen_mode == "Jeden Pewny Kupon (Top X)":
-            with col_conf3: coupon_len = st.number_input("Długość", 1, 50, 12)
-        else:
-            with col_conf3:
-                num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
-                events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
-                chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
-
-        if st.button("🚀 GENERUJ", type="primary"):
-            analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
-            analyzed_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
-            st.session_state.generated_coupons = [] 
-
-            if gen_mode == "Jeden Pewny Kupon (Top X)":
-                st.session_state.generated_coupons.append({"name": "Top Pewniaki", "data": analyzed_pool[:coupon_len]})
-            else: 
-                candidate_pool = analyzed_pool[:chaos_factor]
-                if len(candidate_pool) < events_per_coupon:
-                    st.error("Za mało meczów w puli!")
-                else:
-                    for i in range(num_coupons):
-                        random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
-                        st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
-
-        if st.session_state.generated_coupons:
-            st.write("---")
-            for kupon in st.session_state.generated_coupons:
-                with st.container():
-                    st.subheader(f"🎫 {kupon['name']} ({strat})")
-                    df_k = pd.DataFrame(kupon['data'])
-                    if not df_k.empty:
-                        st.dataframe(df_k.style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-                        st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
-                    else: st.warning("Brak typów.")
-                    st.write("---")
-    else: st.info("Pula pusta.")
