@@ -12,15 +12,14 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.3 Debug", layout="wide")
+st.set_page_config(page_title="MintStats v13.4 Persistent Debug", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (Bardziej agresywny) ---
-# Klucz (to co może wyjść z OCR, małymi literami) -> Wartość (Baza Danych)
+# --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
-    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", # AVS fix
-    "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "sporting braga": "Sp Braga", # Braga fix
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", 
+    "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "sporting braga": "Sp Braga", 
     "w braga": "Sp Braga", "s c braga": "Sp Braga",
     
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
@@ -210,18 +209,14 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- OCR & HELPERS (ULEPSZONE) ---
+# --- OCR & HELPERS (DEBUG V3) ---
 def clean_ocr_text_debug(text):
-    # Agresywne czyszczenie: tylko litery i spacje
     lines = text.split('\n')
     cleaned = []
     for line in lines:
-        # Zamień wszystko co nie jest literą na spację
         normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
-        # Usuń podwójne spacje
         normalized = re.sub(r'\s+', ' ', normalized)
-        if len(normalized) > 2: # Ignoruj śmieci typu "a b"
-            cleaned.append(normalized)
+        if len(normalized) > 2: cleaned.append(normalized)
     return cleaned
 
 def extract_text_from_image(uploaded_file):
@@ -233,28 +228,21 @@ def extract_text_from_image(uploaded_file):
 def smart_parse_matches_v3(text_input, available_teams):
     cleaned_lines = clean_ocr_text_debug(text_input)
     found_teams = []
-    
-    debug_log = [] # Log dla użytkownika
+    debug_log = []
 
     for line in cleaned_lines:
         cur = line.lower().strip()
         matched = None
-        
-        # 1. Sprawdź aliasy (Dokładne lub częściowe)
         for alias, db_name in TEAM_ALIASES.items():
-            # Sprawdź czy alias występuje w linii
             if alias in cur:
                  if db_name in available_teams:
                      matched = db_name
-                     debug_log.append(f"✅ Alias: '{cur}' -> znaleziono '{alias}' -> '{db_name}'")
+                     debug_log.append(f"✅ Alias: '{cur}' -> '{alias}' -> '{db_name}'")
                      break
         
-        # 2. Jeśli brak aliasu, sprawdź Fuzzy Match
         if not matched:
-            # Szukamy bezpośrednio w dostępnych zespołach
             match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
             if match:
-                # Odzyskaj oryginalną nazwę (z dużymi literami)
                 for real_name in available_teams:
                     if real_name.lower() == match[0]:
                         matched = real_name
@@ -262,12 +250,9 @@ def smart_parse_matches_v3(text_input, available_teams):
                         break
         
         if matched:
-            if not found_teams or found_teams[-1] != matched:
-                found_teams.append(matched)
-        else:
-            debug_log.append(f"❌ Nie rozpoznano: '{cur}'")
+            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
+        else: debug_log.append(f"❌ '{cur}'")
 
-    # Parowanie drużyn (Home vs Away)
     matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
     return matches, debug_log, cleaned_lines
 
@@ -310,9 +295,10 @@ def parse_fixtures_csv(file):
 # --- INIT ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
+if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.3: Debug Mode")
+st.title("☁️ MintStats v13.4: Persistent Debug")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -352,27 +338,38 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         with st.form("manual_add"):
             h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
             if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league})
+            
     with tab_ocr:
         uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
         if uploaded_img and st.button("Skanuj"):
             with st.spinner("OCR Analiza..."):
                 txt = extract_text_from_image(uploaded_img)
-                # Używamy wersji v3 z debugowaniem
                 m_list, debug_logs, raw_lines = smart_parse_matches_v3(txt, all_teams_list)
                 
-                # WYŚWIETLANIE DEBUGOWANIA
-                with st.expander("🕵️ DEBUG OCR - Co widzi system?", expanded=True):
-                    st.write("Skopiuj to jeśli dalej nie działa:")
-                    st.text("\n".join(raw_lines))
-                    st.write("---")
-                    st.write("Logika dopasowania:")
-                    for log in debug_logs:
-                        if "✅" in log: st.success(log)
-                        elif "🔹" in log: st.info(log)
-                        else: st.error(log)
+                # ZAPIS DO SESSION STATE (ŻEBY NIE ZNIKAŁO)
+                st.session_state.last_ocr_debug = {
+                    'raw': raw_lines,
+                    'logs': debug_logs
+                }
 
                 if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)} meczów")
                 else: st.warning("Brak dopasowań.")
+
+        # WYŚWIETLANIE TRWAŁEGO DEBUGGERA
+        if st.session_state.last_ocr_debug:
+            with st.expander("🕵️ DEBUG OCR - Co widzi system?", expanded=True):
+                st.write("**Skopiuj to jeśli dalej nie działa:**")
+                st.text("\n".join(st.session_state.last_ocr_debug['raw']))
+                st.divider()
+                st.write("**Logika dopasowania:**")
+                for log in st.session_state.last_ocr_debug['logs']:
+                    if "✅" in log: st.success(log)
+                    elif "🔹" in log: st.info(log)
+                    else: st.error(log)
+            if st.button("Wyczyść Debug"):
+                st.session_state.last_ocr_debug = None
+                st.rerun()
+
     with tab_csv:
         uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
         if uploaded_fix and st.button("📥 Import"):
