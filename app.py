@@ -27,7 +27,7 @@ TEAM_ALIASES = {
     "fc porto": "Porto", "porto": "Porto",
     "rio ave": "Rio Ave", "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
-    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
+    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional", "b biosve": "Rio Ave", "fc porte": "Porto". 
     
     # --- ANGLIA ---
     "manchester uta": "Man United", "man uta": "Man United",
@@ -44,7 +44,8 @@ TEAM_ALIASES = {
     "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
     "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
-    "leeds": "Leeds", "leeds utd": "Leeds",
+    "leeds": "Leeds", "leeds utd": "Leeds", "nottingham": "Nott'm Forest", "manchester city": "Man City", "opr": "QPR", "shettiots urs": "Sheffield United",
+    "q blockouen": "Blackburn", "uit": "Hull", "wottora": "Wrexham", "br newer": "Ipswich", 
 
     # --- HISZPANIA ---
     "valiadolia": "Valladolid", "valladolid": "Valladolid", "burgos cr": "Burgos", "burgos": "Burgos",
@@ -53,7 +54,7 @@ TEAM_ALIASES = {
     "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
     "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
     "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
-    "betis": "Real Betis", "real betis": "Real Betis",
+    "betis": "Real Betis", "real betis": "Real Betis", "celta vigo": "Celta", "cout": "Ceuta", "f zoragozo": "Zaragoza", 
     
     # --- WŁOCHY ---
     "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
@@ -64,6 +65,9 @@ TEAM_ALIASES = {
     # --- NIEMCY ---
     "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
     "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt"
+
+    # --- FRANCJA ---
+    "parc": "Pau FC",
 }
 
 LEAGUE_NAMES = {
