@@ -12,11 +12,22 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.0 Chaos", layout="wide")
+st.set_page_config(page_title="MintStats v13.1 Braga Fix", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIKI ---
 TEAM_ALIASES = {
+    # --- PORTUGALIA (FIX BRAGA) ---
+    "Braga": "Sp Braga",
+    "SC Braga": "Sp Braga",
+    "Sp. Braga": "Sp Braga",
+    "Sporting Braga": "Sp Braga",
+    "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon", 
+    "Vitoria Guimaraes": "Guimaraes", "V. Guimaraes": "Guimaraes",
+    "FC Porto": "Porto", "Rio Ave": "Rio Ave", "Estoril": "Estoril",
+    "Casa Pia": "Casa Pia", "Gil Vicente": "Gil Vicente",
+    
+    # --- ANGLIA ---
     "Hull City": "Hull", "Hull": "Hull", "Watford": "Watford", "Watford FC": "Watford",
     "QPR": "QPR", "Queens Park Rangers": "QPR", "West Brom": "West Brom", "West Bromwich": "West Brom",
     "Blackburn Rovers": "Blackburn", "Preston North End": "Preston", "Preston": "Preston",
@@ -24,10 +35,10 @@ TEAM_ALIASES = {
     "Cardiff City": "Cardiff", "Norwich City": "Norwich", "Luton Town": "Luton",
     "Derby County": "Derby", "Oxford United": "Oxford", "Sheffield Wed": "Sheffield Weds",
     "Sheffield Wednesday": "Sheffield Weds", "Plymouth Argyle": "Plymouth", "Portsmouth": "Portsmouth",
-    "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon", "Vitoria Guimaraes": "Guimaraes",
-    "V. Guimaraes": "Guimaraes", "FC Porto": "Porto", "Rio Ave": "Rio Ave",
     "Man Utd": "Man United", "Manchester Utd": "Man United", "Nottm Forest": "Nott'm Forest",
     "Wolves": "Wolverhampton", "Sheff Utd": "Sheffield United", "Leeds Utd": "Leeds",
+    
+    # --- INNE ---
     "Athletic Bilbao": "Ath Bilbao", "Atl. Madrid": "Ath Madrid", "Atletico Madrid": "Ath Madrid",
     "Betis": "Real Betis", "Inter": "Inter Milan", "AC Milan": "Milan",
     "B. Monchengladbach": "M'gladbach", "Monchengladbach": "M'gladbach", "Mainz": "Mainz 05",
@@ -198,7 +209,7 @@ def smart_parse_matches_v2(text_input, available_teams):
     for line in cleaned_lines:
         cur = line.strip(); matched = None
         for alias, db_name in TEAM_ALIASES.items():
-            if alias.lower() == cur.lower() or (len(alias) > 4 and alias.lower() in cur.lower()):
+            if alias.lower() == cur.lower() or (len(alias) > 3 and alias.lower() in cur.lower()):
                  if db_name in available_teams: matched = db_name; break
         if not matched:
             match = difflib.get_close_matches(cur, available_teams, n=1, cutoff=0.6)
@@ -245,17 +256,16 @@ def parse_fixtures_csv(file):
 
 # --- INIT ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
-if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] # Zmiana na listę
+if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.0: Chaos & Systems")
+st.title("☁️ MintStats v13.1: Braga Fix")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
-    st.info("Wgraj pliki ligowe, aby zaktualizować statystyki.")
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
         with st.spinner("Przetwarzanie..."):
@@ -311,66 +321,55 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         save_fixture_pool(st.session_state.fixture_pool)
         st.rerun()
 
-    # --- EDYTOR TERMINARZA ---
+    # --- EDYTOR TERMINARZA (Kasowanie Pojedyncze) ---
     st.subheader("📋 Terminarz")
+    st.caption("ℹ️ Aby usunąć mecz: Zaznacz wiersz (kliknij) i naciśnij klawisz Delete, lub użyj ikonki kosza w rogu tabeli.")
+    
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
+        # Interaktywny edytor z opcją kasowania (num_rows="dynamic")
         edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
+        
+        # Logika: Jeśli tabela się zmieniła (np. skasowałeś wiersz), zapisz to
         if edited_df.to_dict('records') != st.session_state.fixture_pool:
             st.session_state.fixture_pool = edited_df.to_dict('records')
             save_fixture_pool(st.session_state.fixture_pool)
             
-        if st.button("🗑️ Wyczyść CAŁOŚĆ"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
+        if st.button("🗑️ Wyczyść WSZYSTKO"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
 
         st.divider()
-        
-        # --- NOWY PANEL GENEROWANIA ---
         st.header("🎲 Generator Kuponów")
         
         col_conf1, col_conf2, col_conf3 = st.columns(3)
         with col_conf1:
-            gen_mode = st.radio("Tryb Generowania:", ["Jeden Pewny Kupon (Top X)", "System Rozpisowy (Wiele kuponów)"])
+            gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon (Top X)", "System Rozpisowy (Wiele kuponów)"])
         with col_conf2:
             strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "1", "2", "1X", "X2", "BTS Tak"])
         
-        # Ustawienia zależne od trybu
         if gen_mode == "Jeden Pewny Kupon (Top X)":
-            with col_conf3:
-                coupon_len = st.number_input("Długość kuponu", 1, 50, 12)
-                st.info("Tworzy jeden kupon z absolutnie najlepszych typów (najwyższa matematyczna szansa).")
+            with col_conf3: coupon_len = st.number_input("Długość", 1, 50, 12)
         else:
             with col_conf3:
-                num_coupons = st.number_input("Ile kuponów wygenerować?", 1, 10, 3)
-                events_per_coupon = st.number_input("Ile zdarzeń na kupon?", 1, 20, 5)
-                chaos_factor = st.slider("Poziom Ryzyka (Pula)", 10, 100, 30, help="Z ilu najlepszych meczów losować? 10=Tylko pewniaki, 50=Szeroka pula")
-                st.info(f"System weźmie {chaos_factor} najlepszych meczów i wylosuje z nich {num_coupons} kuponów po {events_per_coupon} zdarzeń.")
+                num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
+                events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
+                chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
 
         if st.button("🚀 GENERUJ", type="primary"):
-            # 1. Analiza wszystkich meczów
             analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
-            
-            # Sortowanie malejąco
             analyzed_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
-            
-            st.session_state.generated_coupons = [] # Reset
+            st.session_state.generated_coupons = [] 
 
             if gen_mode == "Jeden Pewny Kupon (Top X)":
-                final = analyzed_pool[:coupon_len]
-                st.session_state.generated_coupons.append({"name": "Top Pewniaki", "data": final})
-            
-            else: # SYSTEM ROZPISOWY
-                # Bierzemy pulę X najlepszych (np. top 30)
+                st.session_state.generated_coupons.append({"name": "Top Pewniaki", "data": analyzed_pool[:coupon_len]})
+            else: 
                 candidate_pool = analyzed_pool[:chaos_factor]
-                
                 if len(candidate_pool) < events_per_coupon:
-                    st.error(f"Za mało meczów w puli! Masz {len(candidate_pool)}, a chcesz {events_per_coupon} na kupon.")
+                    st.error("Za mało meczów w puli!")
                 else:
                     for i in range(num_coupons):
-                        # Losowanie unikalnych zestawów
                         random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
                         st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
 
-        # --- WYNIKI ---
         if st.session_state.generated_coupons:
             st.write("---")
             for kupon in st.session_state.generated_coupons:
@@ -379,10 +378,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
                         st.dataframe(df_k.style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-                        avg = df_k['Pewność'].mean()
-                        st.caption(f"Średnia pewność: {avg*100:.1f}% | Ilość zdarzeń: {len(df_k)}")
-                    else:
-                        st.warning("Brak typów.")
+                        st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
+                    else: st.warning("Brak typów.")
                     st.write("---")
-
     else: st.info("Pula pusta.")
