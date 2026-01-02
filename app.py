@@ -12,22 +12,26 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.5 Sniper", layout="wide")
+st.set_page_config(page_title="MintStats v13.6 Typo Killer", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TŁUMACZ) ---
+# --- SŁOWNIK ALIASÓW (TŁUMACZ BŁĘDÓW) ---
 TEAM_ALIASES = {
-    # --- PORTUGALIA (Kluczowe poprawki) ---
-    "brag": "Sp Braga",      # FIX: OCR widzi "brag"
+    # --- PORTUGALIA ---
+    "avs": "AFS",            # AVS
+    "avs futebol": "AFS",
+    "afs": "AFS",
+    "a v s": "AFS",          # Jeśli OCR rozdzieli litery
+    
+    "brag": "Sp Braga",      # BRAGA
     "braga": "Sp Braga", 
     "sc braga": "Sp Braga",
     "sp braga": "Sp Braga",
     "w braga": "Sp Braga",
     
-    "bars": "Boavista",      # FIX: OCR widzi "Bars" zamiast Boavista
+    "bars": "Boavista",      # BOAVISTA
     "boavista": "Boavista",
-    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS",
-    "w tondela": "Tondela",  # FIX: Win Tondela
+    "w tondela": "Tondela",
     
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
     "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
@@ -36,16 +40,11 @@ TEAM_ALIASES = {
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
     "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
     
-    # --- HISZPANIA (Niższe ligi z Twojego screena) ---
-    "valiadolia": "Valladolid", "valladolid": "Valladolid",
-    "burgos cr": "Burgos", "burgos": "Burgos",
-    "castetion": "Castellon", "castellon": "Castellon",
-    "racing santander": "Santander", "r santander": "Santander",
-    "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
-    "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
-    "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
-
-    # --- ANGLIA ---
+    # --- ANGLIA (MAN UTD FIX) ---
+    "manchester uta": "Man United",  # <--- FIX DLA CIEBIE
+    "man uta": "Man United",
+    "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
+    
     "hull": "Hull", "hull city": "Hull",
     "watford": "Watford", "watford fc": "Watford",
     "qpr": "QPR", "queens park rangers": "QPR",
@@ -63,11 +62,21 @@ TEAM_ALIASES = {
     "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds",
     "plymouth": "Plymouth", "plymouth argyle": "Plymouth",
     "portsmouth": "Portsmouth",
-    "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
     "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
     "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
     "leeds": "Leeds", "leeds utd": "Leeds",
+
+    # --- HISZPANIA ---
+    "valiadolia": "Valladolid", "valladolid": "Valladolid",
+    "burgos cr": "Burgos", "burgos": "Burgos",
+    "castetion": "Castellon", "castellon": "Castellon",
+    "racing santander": "Santander", "r santander": "Santander",
+    "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
+    "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
+    "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
+    "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
+    "betis": "Real Betis", "real betis": "Real Betis",
     
     # --- WŁOCHY ---
     "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
@@ -228,14 +237,13 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- OCR & HELPERS (DEBUG V3) ---
+# --- OCR & HELPERS ---
 def clean_ocr_text_debug(text):
     lines = text.split('\n')
     cleaned = []
     for line in lines:
         normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
         normalized = re.sub(r'\s+', ' ', normalized)
-        # Filtrujemy nagłówki typu 'liga portugal'
         if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
         if len(normalized) > 2: cleaned.append(normalized)
     return cleaned
@@ -319,7 +327,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.5: Sniper")
+st.title("☁️ MintStats v13.6: Typo Killer")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
