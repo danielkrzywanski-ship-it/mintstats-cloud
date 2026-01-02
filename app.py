@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -12,7 +13,7 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.7 Text Parser", layout="wide")
+st.set_page_config(page_title="MintStats v13.8 Hotfix", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIK ALIASÓW ---
@@ -77,7 +78,8 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE POMOCNICZE ---
+# --- FUNKCJE POMOCNICZE I BAZODANOWE (DEFINIOWANE NA GÓRZE) ---
+
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -115,6 +117,106 @@ def save_fixture_pool(pool_data):
     if pool_data: pd.DataFrame(pool_data).to_csv(FIXTURES_DB_FILE, index=False)
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
+
+def process_uploaded_history(files):
+    all_data = []
+    for uploaded_file in files:
+        try:
+            bytes_data = uploaded_file.getvalue()
+            try: df = pd.read_csv(io.BytesIO(bytes_data)); 
+            except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
+            if len(df.columns) < 2: continue
+            df.columns = [c.strip() for c in df.columns]
+            base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+            if not all(col in df.columns for col in base_req): continue
+            cols = base_req + ['FTR']
+            if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+            df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
+            df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+            df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+            all_data.append(df_cl)
+        except Exception as e: st.error(f"Błąd pliku {uploaded_file.name}: {e}")
+    if all_data:
+        master = pd.concat(all_data, ignore_index=True)
+        conn = sqlite3.connect("mintstats.db")
+        master.to_sql('all_leagues', conn, if_exists='replace', index=False)
+        conn.close()
+        return len(master)
+    return 0
+
+def clean_ocr_text_debug(text):
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
+        if len(normalized) > 2: cleaned.append(normalized)
+    return cleaned
+
+def extract_text_from_image(uploaded_file):
+    try: 
+        image = Image.open(uploaded_file)
+        return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
+    except Exception as e: return f"Error OCR: {e}"
+
+def resolve_team_name(raw_name, available_teams):
+    cur = raw_name.lower().strip()
+    # 1. Alias
+    for alias, db_name in TEAM_ALIASES.items():
+        if alias == cur: return db_name
+        if len(alias) > 3 and alias in cur: return db_name
+    # 2. Fuzzy
+    match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
+    if match:
+        for real_name in available_teams:
+            if real_name.lower() == match[0]: return real_name
+    return None
+
+def parse_raw_text(text_input, available_teams):
+    lines = text_input.split('\n')
+    found_matches = []
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        line = re.sub(r'\d{2}:\d{2}', '', line)
+        parts = []
+        if " - " in line: parts = line.split(" - ")
+        elif " vs " in line: parts = line.split(" vs ")
+        if len(parts) >= 2:
+            raw_home = parts[0]
+            raw_away_chunk = parts[1]
+            raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
+            home_team = resolve_team_name(raw_home, available_teams)
+            away_team = resolve_team_name(raw_away, available_teams)
+            if home_team and away_team and home_team != away_team:
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import'})
+    return found_matches
+
+def smart_parse_matches_v3(text_input, available_teams):
+    cleaned_lines = clean_ocr_text_debug(text_input)
+    found_teams = []
+    debug_log = []
+    for line in cleaned_lines:
+        cur = line.lower().strip()
+        matched = resolve_team_name(cur, available_teams)
+        if matched:
+            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
+            debug_log.append(f"✅ '{cur}' -> '{matched}'")
+        else:
+            debug_log.append(f"❌ '{cur}'")
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
+    return matches, debug_log, cleaned_lines
+
+def parse_fixtures_csv(file):
+    try:
+        df = pd.read_csv(file)
+        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
+        matches = []
+        for _, row in df.iterrows():
+            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
+        return matches, None
+    except Exception as e: return [], str(e)
 
 # --- MODEL POISSONA ---
 class PoissonModel:
@@ -211,107 +313,13 @@ class CouponGenerator:
             res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
         return res
 
-# --- LOGIKA PARSOWANIA TEKSTU (TEXT PARSER) ---
-def resolve_team_name(raw_name, available_teams):
-    cur = raw_name.lower().strip()
-    # 1. Alias
-    for alias, db_name in TEAM_ALIASES.items():
-        if alias == cur: return db_name
-        # Jeśli alias jest długi i zawiera się w nazwie (np. "manchester uta" w "manchester uta - liverpool")
-        if len(alias) > 3 and alias in cur: return db_name
-    
-    # 2. Fuzzy
-    match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
-    if match:
-        for real_name in available_teams:
-            if real_name.lower() == match[0]: return real_name
-    return None
-
-def parse_raw_text(text_input, available_teams):
-    lines = text_input.split('\n')
-    found_matches = []
-    
-    for line in lines:
-        line = line.strip()
-        if not line: continue
-        
-        # Próba znalezienia separatora (myślnik lub vs)
-        # Flashscore często kopiuje się jako: "Arsenal - Liverpool 2.10 3.50..."
-        # Musimy znaleźć separator, który dzieli TEKST (nie liczby)
-        
-        # Usuwamy najpierw godziny (np. 15:00)
-        line = re.sub(r'\d{2}:\d{2}', '', line)
-        
-        parts = []
-        if " - " in line: parts = line.split(" - ")
-        elif " vs " in line: parts = line.split(" vs ")
-        
-        if len(parts) >= 2:
-            raw_home = parts[0]
-            # Prawa strona może zawierać kursy, musimy wziąć tylko początek (nazwę drużyny)
-            raw_away_chunk = parts[1]
-            
-            # Czyścimy prawą stronę z cyfr i kursów
-            raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0] # Bierze tekst przed pierwszą liczbą
-            
-            # Oczyszczamy z białych znaków
-            home_team = resolve_team_name(raw_home, available_teams)
-            away_team = resolve_team_name(raw_away, available_teams)
-            
-            if home_team and away_team and home_team != away_team:
-                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import'})
-
-    return found_matches
-
-# --- OCR & HELPERS ---
-def clean_ocr_text_debug(text):
-    lines = text.split('\n')
-    cleaned = []
-    for line in lines:
-        normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
-        normalized = re.sub(r'\s+', ' ', normalized)
-        if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
-        if len(normalized) > 2: cleaned.append(normalized)
-    return cleaned
-
-def extract_text_from_image(uploaded_file):
-    try: 
-        image = Image.open(uploaded_file)
-        return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
-    except Exception as e: return f"Error OCR: {e}"
-
-def smart_parse_matches_v3(text_input, available_teams):
-    cleaned_lines = clean_ocr_text_debug(text_input)
-    found_teams = []
-    debug_log = []
-    for line in cleaned_lines:
-        cur = line.lower().strip()
-        matched = resolve_team_name(cur, available_teams) # Używamy tej samej funkcji co Text Parser
-        if matched:
-            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
-            debug_log.append(f"✅ '{cur}' -> '{matched}'")
-        else:
-            debug_log.append(f"❌ '{cur}'")
-    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
-    return matches, debug_log, cleaned_lines
-
-def parse_fixtures_csv(file):
-    try:
-        df = pd.read_csv(file)
-        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
-        matches = []
-        for _, row in df.iterrows():
-            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
-        return matches, None
-    except Exception as e: return [], str(e)
-
 # --- INIT ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.7: Text Parser")
+st.title("☁️ MintStats v13.8: Hotfix & Text Parser")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -321,7 +329,7 @@ if mode == "1. 🛠️ ADMIN (Baza Danych)":
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
         with st.spinner("Przetwarzanie..."):
-            count = process_uploaded_history(uploaded_history) # Ta funkcja musi być zdefiniowana (jest w kodzie wyżej, ale tu dla kompletności upewnij się że jest)
+            count = process_uploaded_history(uploaded_history)
             if count > 0: st.success(f"✅ Baza zaktualizowana ({count} meczów).")
             else: st.error("Błąd importu.")
     leagues = get_leagues_list()
@@ -373,7 +381,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     else: st.error(log)
             if st.button("Wyczyść Debug"): st.session_state.last_ocr_debug = None; st.rerun()
 
-    # 3. TEXT PARSER (NOWOŚĆ)
+    # 3. TEXT PARSER
     with tab_text:
         st.info("💡 Skopiuj listę meczów z Flashscore (Ctrl+C) i wklej tutaj.")
         raw_text_input = st.text_area("Wklej mecze (np. 'Braga - Benfica')", height=150)
@@ -382,10 +390,9 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             if parsed:
                 new_items.extend(parsed)
                 st.success(f"✅ Znaleziono {len(parsed)} par!")
-                # Pokaż co znalazł
                 for p in parsed: st.caption(f"{p['Home']} vs {p['Away']}")
             else:
-                st.error("Nie udało się rozpoznać par. Upewnij się, że kopiujesz w formacie 'Drużyna A - Drużyna B'.")
+                st.error("Nie udało się rozpoznać par. Format: 'Drużyna A - Drużyna B'.")
 
     # 4. CSV
     with tab_csv:
@@ -450,30 +457,3 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     else: st.warning("Brak typów.")
                     st.write("---")
     else: st.info("Pula pusta.")
-
-# --- DODAĆ FUNKCJĘ PROCESS UPLOADED HISTORY JEŚLI JEJ BRAKUJE ---
-def process_uploaded_history(files): # Kopia funkcji dla pewności
-    all_data = []
-    for uploaded_file in files:
-        try:
-            bytes_data = uploaded_file.getvalue()
-            try: df = pd.read_csv(io.BytesIO(bytes_data)); 
-            except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
-            if len(df.columns) < 2: continue
-            df.columns = [c.strip() for c in df.columns]
-            base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-            if not all(col in df.columns for col in base_req): continue
-            cols = base_req + ['FTR']
-            if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
-            df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
-            df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
-            df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
-            all_data.append(df_cl)
-        except Exception as e: st.error(f"Błąd pliku {uploaded_file.name}: {e}")
-    if all_data:
-        master = pd.concat(all_data, ignore_index=True)
-        conn = sqlite3.connect("mintstats.db")
-        master.to_sql('all_leagues', conn, if_exists='replace', index=False)
-        conn.close()
-        return len(master)
-    return 0
