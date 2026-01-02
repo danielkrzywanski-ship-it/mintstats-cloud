@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v15.0 Auditor", layout="wide")
+st.set_page_config(page_title="MintStats v15.1 Traveler", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -150,16 +150,14 @@ def save_fixture_pool(pool_data):
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
-# --- ZARZĄDZANIE KUPONAMI ---
 def load_saved_coupons():
     if os.path.exists(COUPONS_DB_FILE):
         try: 
             df = pd.read_csv(COUPONS_DB_FILE)
-            # Konwersja stringa JSON z powrotem na listę
             coupons = []
             for _, row in df.iterrows():
                 try:
-                    data_json = row['Data'].replace("'", '"') # Fix single quotes
+                    data_json = row['Data'].replace("'", '"')
                     coupon_data = json.loads(data_json)
                     coupons.append({
                         'id': row['ID'],
@@ -175,8 +173,6 @@ def load_saved_coupons():
 def save_new_coupon(name, coupon_data):
     coupons = load_saved_coupons()
     new_id = len(coupons) + 1
-    
-    # Konwersja na prosty format do zapisu
     simplified_data = []
     for bet in coupon_data:
         simplified_data.append({
@@ -186,16 +182,14 @@ def save_new_coupon(name, coupon_data):
             'Typ': bet['Typ'],
             'Date': bet.get('Date', 'N/A'),
             'Pewność': bet['Pewność'],
-            'Result': '?' # Domyślnie nieznany
+            'Result': '?' 
         })
-        
     new_entry = {
         'ID': new_id,
         'Name': name,
         'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'Data': json.dumps(simplified_data)
     }
-    
     df_new = pd.DataFrame([new_entry])
     if os.path.exists(COUPONS_DB_FILE):
         df_new.to_csv(COUPONS_DB_FILE, mode='a', header=False, index=False)
@@ -203,93 +197,59 @@ def save_new_coupon(name, coupon_data):
         df_new.to_csv(COUPONS_DB_FILE, index=False)
 
 def check_results_for_coupons():
-    """Główna funkcja SĘDZIEGO"""
     coupons = load_saved_coupons()
     if not coupons: return []
-    
     conn = sqlite3.connect("mintstats.db")
     df_history = pd.read_sql("SELECT * FROM all_leagues", conn)
     conn.close()
-    
-    # Format daty w bazie to zazwyczaj timestamp, musimy uważać
-    # df_history['Date'] jest datetime64
-    
     updated_coupons = []
-    
     for coupon in coupons:
         bets = coupon['data']
         processed_bets = []
         for bet in bets:
             status = bet.get('Result', '?')
-            
-            # Jeśli już rozliczony, pomiń
             if status in ['✅', '❌']:
                 processed_bets.append(bet)
                 continue
-                
-            # Szukamy meczu w bazie
-            # Potrzebujemy: HomeTeam, AwayTeam i daty (opcjonalnie, dla precyzji)
             h, a = bet['Home'], bet['Away']
-            
-            # Filtrowanie
-            match = df_history[
-                (df_history['HomeTeam'] == h) & 
-                (df_history['AwayTeam'] == a)
-            ]
-            
+            match = df_history[(df_history['HomeTeam'] == h) & (df_history['AwayTeam'] == a)]
             if not match.empty:
-                # Mamy wynik!
                 row = match.iloc[0]
                 res = evaluate_bet(bet['Typ'], row)
                 bet['Result'] = '✅' if res else '❌'
                 bet['Score'] = f"{int(row['FTHG'])}:{int(row['FTAG'])}"
-            
             processed_bets.append(bet)
-        
         coupon['data'] = processed_bets
         updated_coupons.append(coupon)
-        
-    # Zapisz zaktualizowane
     df_save = pd.DataFrame([{
-        'ID': c['id'],
-        'Name': c['name'],
-        'DateCreated': c['date_created'],
-        'Data': json.dumps(c['data'])
+        'ID': c['id'], 'Name': c['name'], 'DateCreated': c['date_created'], 'Data': json.dumps(c['data'])
     } for c in updated_coupons])
-    
     df_save.to_csv(COUPONS_DB_FILE, index=False)
     return updated_coupons
 
 def evaluate_bet(bet_type, row):
-    """Logika Sędziego - czy typ wszedł?"""
     fthg, ftag = row['FTHG'], row['FTAG']
     goals = fthg + ftag
-    
     try:
-        if bet_type.startswith("Win"): # Win Home / Win Away
+        if bet_type.startswith("Win"):
             if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
-        
         if bet_type == "Over 2.5": return goals > 2.5
         if bet_type == "Under 4.5": return goals <= 4.5
         if bet_type == "BTS": return fthg > 0 and ftag > 0
         if bet_type == "1X": return fthg >= ftag
         if bet_type == "X2": return ftag >= fthg
-        
         if "HT Over 1.5" in bet_type:
-            if 'HTHG' in row and 'HTAG' in row:
-                return (row['HTHG'] + row['HTAG']) > 1.5
-            return False # Brak danych HT
-            
+            if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
+            return False
     except: return False
     return False
 
-# --- MANAGERSKIE ---
 def check_team_conflict(home, away, pool):
-    # W v15.0 blokujemy tylko identyczne pary
+    # W v15+ blokujemy tylko identyczne pary (home-away)
     for m in pool:
         if m['Home'] == home and m['Away'] == away:
-            return f"⛔ Ten mecz ({home} vs {away}) jest już na liście!"
+            return f"⛔ Mecz {home} vs {away} jest już na liście!"
     return None
 
 def clean_expired_matches(pool):
@@ -527,10 +487,57 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v15.0: The Auditor")
+st.title("☁️ MintStats v15.1: Traveler")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
+
+# --- SEKCJA BACKUP DLA PODRÓŻNIKÓW ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 Kopia Zapasowa (Praca <-> Dom)")
+
+# 1. POBIERANIE (EXPORT)
+if st.sidebar.button("📦 Przygotuj Paczkę (Export)"):
+    # Zapisz obecny stan do plików
+    save_fixture_pool(st.session_state.fixture_pool)
+    # Odczytaj jako bajty
+    try:
+        with open(FIXTURES_DB_FILE, "rb") as f:
+            st.sidebar.download_button("⬇️ Pobierz Terminarz", f, file_name="terminarz_backup.csv", mime="text/csv")
+    except: st.sidebar.warning("Brak terminarza.")
+    
+    try:
+        with open(COUPONS_DB_FILE, "rb") as f:
+            st.sidebar.download_button("⬇️ Pobierz Kupony", f, file_name="kupony_backup.csv", mime="text/csv")
+    except: st.sidebar.warning("Brak kuponów.")
+
+# 2. WGRYWANIE (IMPORT)
+st.sidebar.markdown("---")
+uploaded_backup_fix = st.sidebar.file_uploader("Wgraj Terminarz (CSV)", type=['csv'])
+if uploaded_backup_fix:
+    if st.sidebar.button("♻️ Przywróć Terminarz"):
+        try:
+            df = pd.read_csv(uploaded_backup_fix)
+            # Upewnij się co do daty
+            if 'Date' not in df.columns: df['Date'] = datetime.today().strftime('%Y-%m-%d')
+            st.session_state.fixture_pool = df.to_dict('records')
+            save_fixture_pool(st.session_state.fixture_pool)
+            st.sidebar.success("Terminarz przywrócony!")
+            st.rerun()
+        except Exception as e: st.sidebar.error(f"Błąd: {e}")
+
+uploaded_backup_coup = st.sidebar.file_uploader("Wgraj Kupony (CSV)", type=['csv'])
+if uploaded_backup_coup:
+    if st.sidebar.button("♻️ Przywróć Kupony"):
+        try:
+            # Zapisz bezpośrednio na dysk
+            with open(COUPONS_DB_FILE, "wb") as f:
+                f.write(uploaded_backup_coup.getbuffer())
+            st.sidebar.success("Kupony przywrócone!")
+            st.rerun()
+        except Exception as e: st.sidebar.error(f"Błąd: {e}")
+
+# --- KONIEC SEKCJI BACKUP ---
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
