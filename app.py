@@ -12,16 +12,20 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.1 Braga Fix", layout="wide")
+st.set_page_config(page_title="MintStats v13.2 Fix", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIKI ---
+# --- SŁOWNIK ALIASÓW (TŁUMACZ) ---
+# Klucz (lewa) = To co widzi na screenie/Flashscore
+# Wartość (prawa) = To jak nazywa się w Twojej bazie (pliki CSV)
 TEAM_ALIASES = {
-    # --- PORTUGALIA (FIX BRAGA) ---
-    "Braga": "Sp Braga",
+    # --- PORTUGALIA ---
+    "AVS": "AFS",            # NAPRAWA AVS -> AFS
+    "AVS Futebol": "AFS",
+    "Braga": "Sp Braga",     # NAPRAWA BRAGI
     "SC Braga": "Sp Braga",
+    "W Braga": "Sp Braga",   # Częsty błąd OCR (Win Braga)
     "Sp. Braga": "Sp Braga",
-    "Sporting Braga": "Sp Braga",
     "Sporting": "Sp Lisbon", "Sporting CP": "Sp Lisbon", 
     "Vitoria Guimaraes": "Guimaraes", "V. Guimaraes": "Guimaraes",
     "FC Porto": "Porto", "Rio Ave": "Rio Ave", "Estoril": "Estoril",
@@ -209,6 +213,7 @@ def smart_parse_matches_v2(text_input, available_teams):
     for line in cleaned_lines:
         cur = line.strip(); matched = None
         for alias, db_name in TEAM_ALIASES.items():
+            # Sprawdzenie aliasu: dokładne LUB zawiera (dla przypadków jak 'W Braga')
             if alias.lower() == cur.lower() or (len(alias) > 3 and alias.lower() in cur.lower()):
                  if db_name in available_teams: matched = db_name; break
         if not matched:
@@ -259,7 +264,7 @@ if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.1: Braga Fix")
+st.title("☁️ MintStats v13.2: AVS & Braga Fix")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -323,14 +328,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
     # --- EDYTOR TERMINARZA (Kasowanie Pojedyncze) ---
     st.subheader("📋 Terminarz")
-    st.caption("ℹ️ Aby usunąć mecz: Zaznacz wiersz (kliknij) i naciśnij klawisz Delete, lub użyj ikonki kosza w rogu tabeli.")
+    st.caption("ℹ️ Aby usunąć mecz: Zaznacz wiersz i naciśnij klawisz Delete.")
     
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        # Interaktywny edytor z opcją kasowania (num_rows="dynamic")
         edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
         
-        # Logika: Jeśli tabela się zmieniła (np. skasowałeś wiersz), zapisz to
         if edited_df.to_dict('records') != st.session_state.fixture_pool:
             st.session_state.fixture_pool = edited_df.to_dict('records')
             save_fixture_pool(st.session_state.fixture_pool)
