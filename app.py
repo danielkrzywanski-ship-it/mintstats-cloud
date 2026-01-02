@@ -12,13 +12,13 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.9 Custom Aliases", layout="wide")
+st.set_page_config(page_title="MintStats v13.10 Ultimate Dict", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TWOJE POPRAWKI) ---
+# --- SŁOWNIK ALIASÓW (TWOJE AKTUALIZACJE) ---
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
-    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS",
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS", "b ars": "AFS",
     "brag": "Sp Braga", "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "w braga": "Sp Braga",
     "bars": "Boavista", "boavista": "Boavista", "w tondela": "Tondela",
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
@@ -27,13 +27,13 @@ TEAM_ALIASES = {
     "rio ave": "Rio Ave", "b biosve": "Rio Ave",
     "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
-    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional", "b ars": "AFS",
+    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
     
     # --- ANGLIA ---
     "manchester uta": "Man United", "man uta": "Man United",
     "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
     "hull": "Hull", "hull city": "Hull", "uit": "Hull",
-    "watford": "Watford", "watford fc": "Watford",
+    "watford": "Watford", "watford fc": "Watford", "wottora": "Watford",
     "qpr": "QPR", "queens park rangers": "QPR", "opr": "QPR",
     "west brom": "West Brom", "west bromwich": "West Brom",
     "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "q blockouen": "Blackburn",
@@ -46,15 +46,15 @@ TEAM_ALIASES = {
     "luton": "Luton", "luton town": "Luton",
     "derby": "Derby", "derby county": "Derby", 
     "oxford": "Oxford", "oxford united": "Oxford",
-    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds",
+    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds", "shetticia wea": "Sheffield Weds",
     "plymouth": "Plymouth", "plymouth argyle": "Plymouth", 
     "portsmouth": "Portsmouth",
     "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest", "nottingham": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
-    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", "shettiots urs": "Sheffield United",
+    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", "shettiots urs": "Sheffield United", "shottiois urs": "Sheffield United",
     "leeds": "Leeds", "leeds utd": "Leeds", 
     "manchester city": "Man City", "man city": "Man City",
-    "wottora": "Wrexham", "wrexham": "Wrexham",
+    "wrexham": "Wrexham",
     "br newer": "Ipswich", "ipswich": "Ipswich",
 
     # --- HISZPANIA ---
@@ -170,7 +170,6 @@ def clean_ocr_text_debug(text):
     lines = text.split('\n')
     cleaned = []
     for line in lines:
-        # Pozwalamy na cyfry, bo czasem OCR miesza nazwy typu "1. FC Koln"
         normalized = re.sub(r'[^a-zA-Z0-9 ]', ' ', line).strip()
         normalized = re.sub(r'\s+', ' ', normalized)
         if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
@@ -188,7 +187,6 @@ def resolve_team_name(raw_name, available_teams):
     # 1. Alias
     for alias, db_name in TEAM_ALIASES.items():
         if alias == cur: return db_name
-        # Dopasowanie "zawiera się w", ale tylko dla dłuższych aliasów (>3 znaki)
         if len(alias) > 3 and alias in cur: return db_name
     # 2. Fuzzy
     match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
@@ -343,7 +341,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.9: Custom Aliases")
+st.title("☁️ MintStats v13.10: Ultimate Dict")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
