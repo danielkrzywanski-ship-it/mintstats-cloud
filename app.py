@@ -13,7 +13,7 @@ import os
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v14.0 Manager Pro", layout="wide")
+st.set_page_config(page_title="MintStats v14.1 Stable", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
 # --- SŁOWNIK ALIASÓW ---
@@ -108,7 +108,7 @@ LEAGUE_NAMES = {
     'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
 }
 
-# --- FUNKCJE POMOCNICZE I BAZODANOWE ---
+# --- FUNKCJE POMOCNICZE ---
 
 def get_leagues_list():
     try:
@@ -148,7 +148,7 @@ def save_fixture_pool(pool_data):
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
-# --- NOWE FUNKCJE MANAGERA ---
+# --- FUNKCJE MANAGERA ---
 def check_team_conflict(home, away, pool):
     """Sprawdza, czy drużyny już nie grają w puli"""
     teams_in_pool = set()
@@ -166,20 +166,17 @@ def clean_expired_matches(pool):
     new_pool = []
     removed = 0
     for m in pool:
-        # Jeśli mecz nie ma daty, zostawiamy go
         if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan':
             new_pool.append(m)
             continue
-        
-        # Jeśli ma datę, sprawdzamy
         try:
-            match_date = m['Date']
-            if match_date >= today_str:
+            # Porównujemy jako stringi YYYY-MM-DD
+            if str(m['Date']) >= today_str:
                 new_pool.append(m)
             else:
                 removed += 1
         except:
-            new_pool.append(m) # W razie błędu daty, zostaw
+            new_pool.append(m)
             
     return new_pool, removed
 
@@ -239,6 +236,7 @@ def resolve_team_name(raw_name, available_teams):
 def parse_raw_text(text_input, available_teams):
     lines = text_input.split('\n')
     found_matches = []
+    today_str = datetime.today().strftime('%Y-%m-%d')
     for line in lines:
         line = line.strip()
         if not line: continue
@@ -253,13 +251,14 @@ def parse_raw_text(text_input, available_teams):
             home_team = resolve_team_name(raw_home, available_teams)
             away_team = resolve_team_name(raw_away, available_teams)
             if home_team and away_team and home_team != away_team:
-                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': datetime.today().strftime('%Y-%m-%d')})
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': today_str})
     return found_matches
 
 def smart_parse_matches_v3(text_input, available_teams):
     cleaned_lines = clean_ocr_text_debug(text_input)
     found_teams = []
     debug_log = []
+    today_str = datetime.today().strftime('%Y-%m-%d')
     for line in cleaned_lines:
         cur = line.lower().strip()
         matched = resolve_team_name(cur, available_teams)
@@ -268,20 +267,17 @@ def smart_parse_matches_v3(text_input, available_teams):
             debug_log.append(f"✅ '{cur}' -> '{matched}'")
         else:
             debug_log.append(f"❌ '{cur}'")
-    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': datetime.today().strftime('%Y-%m-%d')} for i in range(0, len(found_teams) - 1, 2)]
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': today_str} for i in range(0, len(found_teams) - 1, 2)]
     return matches, debug_log, cleaned_lines
 
 def parse_fixtures_csv(file):
     try:
         df = pd.read_csv(file)
         if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
-        
-        # Jeśli jest kolumna Date, sformatuj ją
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
         else:
-            df['Date'] = datetime.today().strftime('%Y-%m-%d') # Domyślnie dzisiaj
-
+            df['Date'] = datetime.today().strftime('%Y-%m-%d')
         matches = []
         for _, row in df.iterrows():
             matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
@@ -364,34 +360,21 @@ class CouponGenerator:
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             
-            # --- LOGIKA KOSZYKÓW (SMART MIX) ---
-            # Tworzymy potencjalne typy z ich pewnością i KATEGORIĄ
             potential_bets = [
-                # KOSZYK 1: WINNER (Zwycięzca)
                 {'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'WIN'},
                 {'typ': f"Win {m['Away']}", 'prob': probs['2'], 'cat': 'WIN'},
-                
-                # KOSZYK 2: GOALS (Gole/Ofensywa)
                 {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'GOAL'},
                 {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'GOAL'},
                 {'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'GOAL'},
-                
-                # KOSZYK 3: SAFETY (Bezpieczniki)
                 {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'SAFE'},
                 {'typ': "1X", 'prob': probs['1X'], 'cat': 'SAFE'},
                 {'typ': "X2", 'prob': probs['X2'], 'cat': 'SAFE'}
             ]
             
-            # Wybór najlepszego typu w zależności od strategii
             selected_bet = None
-            
             if strategy == "Smart Mix (Zróżnicowany)":
-                # Wybieramy absolutnie najpewniejszy typ z DOWOLNEGO koszyka dla tego meczu,
-                # ale zapisujemy jego kategorię, żeby potem generator kuponów mógł mieszać.
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
                 selected_bet = best
-            
-            # Stare strategie (pojedyncze)
             elif strategy == "1 (Gospodarz)": selected_bet = {'typ': f"Win {m['Home']}", 'prob': probs['1']}
             elif strategy == "2 (Gość)": selected_bet = {'typ': f"Win {m['Away']}", 'prob': probs['2']}
             elif strategy == "Over 2.5": selected_bet = {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT']}
@@ -419,7 +402,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v14.0: Manager Pro")
+st.title("☁️ MintStats v14.1: Stable")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -545,14 +528,11 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        # Upewnij się że kolumna Date jest
         if 'Date' not in df_pool.columns: df_pool['Date'] = datetime.today().strftime('%Y-%m-%d')
         
+        # --- FIX: WYRZUCONO COLUMN CONFIG DLA DATY ---
         edited_df = st.data_editor(
             df_pool, 
-            column_config={
-                "Date": st.column_config.DateColumn("Data", format="YYYY-MM-DD")
-            },
             num_rows="dynamic", 
             use_container_width=True, 
             key="fixture_editor"
