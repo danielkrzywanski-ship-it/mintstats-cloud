@@ -12,24 +12,39 @@ import io
 import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.4 Persistent Debug", layout="wide")
+st.set_page_config(page_title="MintStats v13.5 Sniper", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW ---
+# --- SŁOWNIK ALIASÓW (TŁUMACZ) ---
 TEAM_ALIASES = {
-    # --- PORTUGALIA ---
-    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", 
-    "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "sporting braga": "Sp Braga", 
-    "w braga": "Sp Braga", "s c braga": "Sp Braga",
+    # --- PORTUGALIA (Kluczowe poprawki) ---
+    "brag": "Sp Braga",      # FIX: OCR widzi "brag"
+    "braga": "Sp Braga", 
+    "sc braga": "Sp Braga",
+    "sp braga": "Sp Braga",
+    "w braga": "Sp Braga",
+    
+    "bars": "Boavista",      # FIX: OCR widzi "Bars" zamiast Boavista
+    "boavista": "Boavista",
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS",
+    "w tondela": "Tondela",  # FIX: Win Tondela
     
     "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "sp lisbon": "Sp Lisbon",
     "vitoria guimaraes": "Guimaraes", "v guimaraes": "Guimaraes", "guimaraes": "Guimaraes",
     "fc porto": "Porto", "porto": "Porto",
     "rio ave": "Rio Ave", "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
-    "boavista": "Boavista", "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara",
-    "nacional": "Nacional",
+    "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
     
+    # --- HISZPANIA (Niższe ligi z Twojego screena) ---
+    "valiadolia": "Valladolid", "valladolid": "Valladolid",
+    "burgos cr": "Burgos", "burgos": "Burgos",
+    "castetion": "Castellon", "castellon": "Castellon",
+    "racing santander": "Santander", "r santander": "Santander",
+    "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
+    "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B",
+    "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
+
     # --- ANGLIA ---
     "hull": "Hull", "hull city": "Hull",
     "watford": "Watford", "watford fc": "Watford",
@@ -54,10 +69,14 @@ TEAM_ALIASES = {
     "sheff utd": "Sheffield United", "sheffield united": "Sheffield United",
     "leeds": "Leeds", "leeds utd": "Leeds",
     
-    # --- INNE ---
-    "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
-    "betis": "Real Betis", "real betis": "Real Betis",
+    # --- WŁOCHY ---
+    "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
+    "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", "b parma": "Parma", "parma": "Parma",
+    "y suventus": "Juventus", "juventus": "Juventus", "lecce": "Lecce", "atalanta": "Atalanta",
+    "as roma": "Roma", "roma": "Roma",
     "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
+    
+    # --- NIEMCY ---
     "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
     "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt"
 }
@@ -216,6 +235,8 @@ def clean_ocr_text_debug(text):
     for line in lines:
         normalized = re.sub(r'[^a-zA-Z]', ' ', line).strip()
         normalized = re.sub(r'\s+', ' ', normalized)
+        # Filtrujemy nagłówki typu 'liga portugal'
+        if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
         if len(normalized) > 2: cleaned.append(normalized)
     return cleaned
 
@@ -234,7 +255,7 @@ def smart_parse_matches_v3(text_input, available_teams):
         cur = line.lower().strip()
         matched = None
         for alias, db_name in TEAM_ALIASES.items():
-            if alias in cur:
+            if alias == cur or (len(alias) > 3 and alias in cur):
                  if db_name in available_teams:
                      matched = db_name
                      debug_log.append(f"✅ Alias: '{cur}' -> '{alias}' -> '{db_name}'")
@@ -298,7 +319,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.4: Persistent Debug")
+st.title("☁️ MintStats v13.5: Sniper")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -346,22 +367,15 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                 txt = extract_text_from_image(uploaded_img)
                 m_list, debug_logs, raw_lines = smart_parse_matches_v3(txt, all_teams_list)
                 
-                # ZAPIS DO SESSION STATE (ŻEBY NIE ZNIKAŁO)
-                st.session_state.last_ocr_debug = {
-                    'raw': raw_lines,
-                    'logs': debug_logs
-                }
-
+                st.session_state.last_ocr_debug = {'raw': raw_lines, 'logs': debug_logs}
                 if m_list: new_items.extend(m_list); st.success(f"Wykryto {len(m_list)} meczów")
                 else: st.warning("Brak dopasowań.")
 
-        # WYŚWIETLANIE TRWAŁEGO DEBUGGERA
         if st.session_state.last_ocr_debug:
             with st.expander("🕵️ DEBUG OCR - Co widzi system?", expanded=True):
-                st.write("**Skopiuj to jeśli dalej nie działa:**")
                 st.text("\n".join(st.session_state.last_ocr_debug['raw']))
                 st.divider()
-                st.write("**Logika dopasowania:**")
+                st.write("**Logika:**")
                 for log in st.session_state.last_ocr_debug['logs']:
                     if "✅" in log: st.success(log)
                     elif "🔹" in log: st.info(log)
@@ -386,8 +400,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
     # --- EDYTOR TERMINARZA ---
     st.subheader("📋 Terminarz")
-    st.caption("ℹ️ Aby usunąć mecz: Zaznacz wiersz i naciśnij klawisz Delete.")
-    
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
         edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
@@ -400,7 +412,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
         st.divider()
         st.header("🎲 Generator Kuponów")
-        
         col_conf1, col_conf2, col_conf3 = st.columns(3)
         with col_conf1:
             gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon (Top X)", "System Rozpisowy (Wiele kuponów)"])
