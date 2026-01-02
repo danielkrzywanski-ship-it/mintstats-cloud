@@ -10,12 +10,13 @@ import pytesseract
 import re
 import io
 import os
+from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v13.11 OCR Hunter", layout="wide")
+st.set_page_config(page_title="MintStats v14.0 Manager Pro", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 
-# --- SŁOWNIK ALIASÓW (TWOJE AKTUALIZACJE) ---
+# --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
     # --- PORTUGALIA ---
     "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS", "b ars": "AFS",
@@ -147,6 +148,41 @@ def save_fixture_pool(pool_data):
     else:
         if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
 
+# --- NOWE FUNKCJE MANAGERA ---
+def check_team_conflict(home, away, pool):
+    """Sprawdza, czy drużyny już nie grają w puli"""
+    teams_in_pool = set()
+    for m in pool:
+        teams_in_pool.add(m['Home'])
+        teams_in_pool.add(m['Away'])
+    
+    if home in teams_in_pool: return f"⛔ Drużyna {home} jest już na liście!"
+    if away in teams_in_pool: return f"⛔ Drużyna {away} jest już na liście!"
+    return None
+
+def clean_expired_matches(pool):
+    """Usuwa mecze starsze niż dzisiaj"""
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    new_pool = []
+    removed = 0
+    for m in pool:
+        # Jeśli mecz nie ma daty, zostawiamy go
+        if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan':
+            new_pool.append(m)
+            continue
+        
+        # Jeśli ma datę, sprawdzamy
+        try:
+            match_date = m['Date']
+            if match_date >= today_str:
+                new_pool.append(m)
+            else:
+                removed += 1
+        except:
+            new_pool.append(m) # W razie błędu daty, zostaw
+            
+    return new_pool, removed
+
 def process_uploaded_history(files):
     all_data = []
     for uploaded_file in files:
@@ -191,11 +227,9 @@ def extract_text_from_image(uploaded_file):
 
 def resolve_team_name(raw_name, available_teams):
     cur = raw_name.lower().strip()
-    # 1. Alias
     for alias, db_name in TEAM_ALIASES.items():
         if alias == cur: return db_name
         if len(alias) > 3 and alias in cur: return db_name
-    # 2. Fuzzy
     match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
     if match:
         for real_name in available_teams:
@@ -219,7 +253,7 @@ def parse_raw_text(text_input, available_teams):
             home_team = resolve_team_name(raw_home, available_teams)
             away_team = resolve_team_name(raw_away, available_teams)
             if home_team and away_team and home_team != away_team:
-                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import'})
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': datetime.today().strftime('%Y-%m-%d')})
     return found_matches
 
 def smart_parse_matches_v3(text_input, available_teams):
@@ -234,16 +268,23 @@ def smart_parse_matches_v3(text_input, available_teams):
             debug_log.append(f"✅ '{cur}' -> '{matched}'")
         else:
             debug_log.append(f"❌ '{cur}'")
-    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import'} for i in range(0, len(found_teams) - 1, 2)]
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': datetime.today().strftime('%Y-%m-%d')} for i in range(0, len(found_teams) - 1, 2)]
     return matches, debug_log, cleaned_lines
 
 def parse_fixtures_csv(file):
     try:
         df = pd.read_csv(file)
         if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
+        
+        # Jeśli jest kolumna Date, sformatuj ją
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+        else:
+            df['Date'] = datetime.today().strftime('%Y-%m-%d') # Domyślnie dzisiaj
+
         matches = []
         for _, row in df.iterrows():
-            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div']})
+            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
         return matches, None
     except Exception as e: return [], str(e)
 
@@ -316,30 +357,60 @@ class PoissonModel:
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
-    def analyze_pool(self, pool, strategy="Mieszany"):
+    def analyze_pool(self, pool, strategy="Smart Mix"):
         res = []
         for m in pool:
             xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
-            sel_name, sel_prob = None, 0.0
             
-            if strategy == "1 (Gospodarz)": sel_name, sel_prob = f"Wygrana {m['Home']}", probs['1']
-            elif strategy == "2 (Gość)": sel_name, sel_prob = f"Wygrana {m['Away']}", probs['2']
-            elif strategy == "Over 2.5": sel_name, sel_prob = "Over 2.5", probs['Over_2.5_FT']
-            elif strategy == "Under 4.5": sel_name, sel_prob = "Under 4.5", probs['Under_4.5_FT']
-            elif strategy == "1. Połowa Over 1.5": sel_name, sel_prob = "HT Over 1.5", probs['Over_1.5_HT']
-            elif strategy == "BTS Tak": sel_name, sel_prob = "BTS Tak", probs['BTS_Yes']
-            elif strategy == "1X": sel_name, sel_prob = "1X", probs['1X']
-            elif strategy == "X2": sel_name, sel_prob = "X2", probs['X2']
-            else:
-                opts = [('1', f"Win {m['Home']}", probs['1']), ('2', f"Win {m['Away']}", probs['2']),
-                        ('O2.5', "Over 2.5", probs['Over_2.5_FT']), ('U4.5', "Under 4.5", probs['Under_4.5_FT']),
-                        ('HT1.5', "HT Over 1.5", probs['Over_1.5_HT']), ('BTS', "BTS", probs['BTS_Yes']), 
-                        ('1X', "1X", probs['1X']), ('X2', "X2", probs['X2'])]
-                best = sorted(opts, key=lambda x: x[2], reverse=True)[0]
-                _, sel_name, sel_prob = best
-            res.append({'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Typ': sel_name, 'Pewność': sel_prob, 'xG': f"{xg_h:.2f}:{xg_a:.2f}"})
+            # --- LOGIKA KOSZYKÓW (SMART MIX) ---
+            # Tworzymy potencjalne typy z ich pewnością i KATEGORIĄ
+            potential_bets = [
+                # KOSZYK 1: WINNER (Zwycięzca)
+                {'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'WIN'},
+                {'typ': f"Win {m['Away']}", 'prob': probs['2'], 'cat': 'WIN'},
+                
+                # KOSZYK 2: GOALS (Gole/Ofensywa)
+                {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'GOAL'},
+                {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'GOAL'},
+                {'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'GOAL'},
+                
+                # KOSZYK 3: SAFETY (Bezpieczniki)
+                {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'SAFE'},
+                {'typ': "1X", 'prob': probs['1X'], 'cat': 'SAFE'},
+                {'typ': "X2", 'prob': probs['X2'], 'cat': 'SAFE'}
+            ]
+            
+            # Wybór najlepszego typu w zależności od strategii
+            selected_bet = None
+            
+            if strategy == "Smart Mix (Zróżnicowany)":
+                # Wybieramy absolutnie najpewniejszy typ z DOWOLNEGO koszyka dla tego meczu,
+                # ale zapisujemy jego kategorię, żeby potem generator kuponów mógł mieszać.
+                best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
+                selected_bet = best
+            
+            # Stare strategie (pojedyncze)
+            elif strategy == "1 (Gospodarz)": selected_bet = {'typ': f"Win {m['Home']}", 'prob': probs['1']}
+            elif strategy == "2 (Gość)": selected_bet = {'typ': f"Win {m['Away']}", 'prob': probs['2']}
+            elif strategy == "Over 2.5": selected_bet = {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT']}
+            elif strategy == "Under 4.5": selected_bet = {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT']}
+            elif strategy == "1. Połowa Over 1.5": selected_bet = {'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT']}
+            elif strategy == "BTS Tak": selected_bet = {'typ': "BTS", 'prob': probs['BTS_Yes']}
+            elif strategy == "1X": selected_bet = {'typ': "1X", 'prob': probs['1X']}
+            elif strategy == "X2": selected_bet = {'typ': "X2", 'prob': probs['X2']}
+            
+            if selected_bet:
+                res.append({
+                    'Mecz': f"{m['Home']} - {m['Away']}", 
+                    'Liga': m.get('League', 'N/A'), 
+                    'Date': m.get('Date', 'N/A'),
+                    'Typ': selected_bet['typ'], 
+                    'Pewność': selected_bet['prob'], 
+                    'Kategoria': selected_bet.get('cat', 'OTHER'),
+                    'xG': f"{xg_h:.2f}:{xg_a:.2f}"
+                })
         return res
 
 # --- INIT ---
@@ -348,7 +419,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v13.11: OCR Hunter")
+st.title("☁️ MintStats v14.0: Manager Pro")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW"])
@@ -388,8 +459,13 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         df_l = get_data_for_league(sel_league)
         teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
         with st.form("manual_add"):
-            h = st.selectbox("Dom", teams); a = st.selectbox("Wyjazd", teams)
-            if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league})
+            col_date, col_h, col_a = st.columns([1,2,2])
+            with col_date: date_input = st.date_input("Data", datetime.today())
+            with col_h: h = st.selectbox("Dom", teams)
+            with col_a: a = st.selectbox("Wyjazd", teams)
+            
+            if st.form_submit_button("➕ Dodaj") and h!=a: 
+                new_items.append({'Home':h, 'Away':a, 'League':sel_league, 'Date': str(date_input)})
     
     # 2. OCR
     with tab_ocr:
@@ -413,15 +489,13 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     # 3. TEXT PARSER
     with tab_text:
         st.info("💡 Skopiuj listę meczów z Flashscore (Ctrl+C) i wklej tutaj.")
-        raw_text_input = st.text_area("Wklej mecze (np. 'Braga - Benfica')", height=150)
+        raw_text_input = st.text_area("Wklej mecze", height=150)
         if st.button("🔍 Analizuj Tekst"):
             parsed = parse_raw_text(raw_text_input, all_teams_list)
             if parsed:
                 new_items.extend(parsed)
                 st.success(f"✅ Znaleziono {len(parsed)} par!")
-                for p in parsed: st.caption(f"{p['Home']} vs {p['Away']}")
-            else:
-                st.error("Nie udało się rozpoznać par. Format: 'Drużyna A - Drużyna B'.")
+            else: st.error("Brak par.")
 
     # 4. CSV
     with tab_csv:
@@ -431,28 +505,75 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
             else: st.error(err)
 
+    # --- PRZETWARZANIE NOWYCH MECZÓW (Z BLOKADĄ DUPLIKATÓW) ---
     if new_items:
+        added_count = 0
+        errors = []
         for item in new_items:
-            if not any(x['Home']==item['Home'] and x['Away']==item['Away'] for x in st.session_state.fixture_pool):
+            # Sprawdź konflikt
+            conflict_msg = check_team_conflict(item['Home'], item['Away'], st.session_state.fixture_pool)
+            if conflict_msg:
+                errors.append(conflict_msg)
+            else:
                 st.session_state.fixture_pool.append(item)
+                added_count += 1
+        
         save_fixture_pool(st.session_state.fixture_pool)
+        
+        if added_count > 0: st.toast(f"Dodano {added_count} meczów!")
+        if errors:
+            with st.expander("⚠️ Pominięto (Konflikty)", expanded=True):
+                for e in errors: st.warning(e)
         st.rerun()
 
     # --- EDYTOR I GENERATOR ---
     st.subheader("📋 Terminarz")
+    
+    # Przycisk czyszczenia starych
+    col_clean, col_clear = st.columns(2)
+    with col_clean:
+        if st.button("🧹 Usuń przeterminowane mecze"):
+            st.session_state.fixture_pool, removed = clean_expired_matches(st.session_state.fixture_pool)
+            save_fixture_pool(st.session_state.fixture_pool)
+            st.success(f"Usunięto {removed} starych meczów.")
+            st.rerun()
+    with col_clear:
+        if st.button("🗑️ Wyczyść WSZYSTKO"): 
+            st.session_state.fixture_pool = []
+            save_fixture_pool([])
+            st.rerun()
+
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
-        edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
-        if edited_df.to_dict('records') != st.session_state.fixture_pool:
-            st.session_state.fixture_pool = edited_df.to_dict('records')
+        # Upewnij się że kolumna Date jest
+        if 'Date' not in df_pool.columns: df_pool['Date'] = datetime.today().strftime('%Y-%m-%d')
+        
+        edited_df = st.data_editor(
+            df_pool, 
+            column_config={
+                "Date": st.column_config.DateColumn("Data", format="YYYY-MM-DD")
+            },
+            num_rows="dynamic", 
+            use_container_width=True, 
+            key="fixture_editor"
+        )
+        
+        # Formatowanie daty przy zapisie (żeby stringi się zgadzały)
+        formatted_records = []
+        for r in edited_df.to_dict('records'):
+            if isinstance(r['Date'], (datetime, date)):
+                r['Date'] = r['Date'].strftime('%Y-%m-%d')
+            formatted_records.append(r)
+
+        if formatted_records != st.session_state.fixture_pool:
+            st.session_state.fixture_pool = formatted_records
             save_fixture_pool(st.session_state.fixture_pool)
-        if st.button("🗑️ Wyczyść WSZYSTKO"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
 
         st.divider()
         st.header("🎲 Generator Kuponów")
         c1, c2, c3 = st.columns(3)
         with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
-        with c2: strat = st.selectbox("Strategia", ["Mieszany", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "1", "2", "1X", "X2", "BTS Tak"])
+        with c2: strat = st.selectbox("Strategia", ["Smart Mix (Zróżnicowany)", "1 (Gospodarz)", "2 (Gość)", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "BTS Tak", "1X", "X2"])
         with c3:
             if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
             else:
@@ -462,12 +583,31 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
         if st.button("🚀 GENERUJ", type="primary"):
             analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
-            analyzed_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+            
+            # --- LOGIKA SORTOWANIA DLA SMART MIX ---
+            if strat == "Smart Mix (Zróżnicowany)":
+                # Dzielimy na koszyki
+                cat_win = sorted([x for x in analyzed_pool if x['Kategoria'] == 'WIN'], key=lambda x: x['Pewność'], reverse=True)
+                cat_goal = sorted([x for x in analyzed_pool if x['Kategoria'] == 'GOAL'], key=lambda x: x['Pewność'], reverse=True)
+                cat_safe = sorted([x for x in analyzed_pool if x['Kategoria'] == 'SAFE'], key=lambda x: x['Pewność'], reverse=True)
+                
+                mixed_list = []
+                # Bierzemy na zmianę: WIN, GOAL, SAFE, WIN, GOAL, SAFE...
+                max_len = max(len(cat_win), len(cat_goal), len(cat_safe))
+                for i in range(max_len):
+                    if i < len(cat_win): mixed_list.append(cat_win[i])
+                    if i < len(cat_goal): mixed_list.append(cat_goal[i])
+                    if i < len(cat_safe): mixed_list.append(cat_safe[i])
+                
+                final_pool = mixed_list # To jest nasza posortowana lista
+            else:
+                final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+
             st.session_state.generated_coupons = [] 
             if gen_mode == "Jeden Pewny Kupon":
-                st.session_state.generated_coupons.append({"name": "Top Pewniaki", "data": analyzed_pool[:coupon_len]})
+                st.session_state.generated_coupons.append({"name": "Top Smart Mix", "data": final_pool[:coupon_len]})
             else: 
-                candidate_pool = analyzed_pool[:chaos_factor]
+                candidate_pool = final_pool[:chaos_factor]
                 if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
                 else:
                     for i in range(num_coupons):
@@ -478,10 +618,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             st.write("---")
             for kupon in st.session_state.generated_coupons:
                 with st.container():
-                    st.subheader(f"🎫 {kupon['name']} ({strat})")
+                    st.subheader(f"🎫 {kupon['name']}")
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
-                        st.dataframe(df_k.style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
+                        # Ukrywamy kolumnę Kategoria dla czytelności, ale używamy jej w logice
+                        disp_cols = ['Date', 'Mecz', 'Liga', 'Typ', 'Pewność', 'xG']
+                        st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
                         st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
                     else: st.warning("Brak typów.")
                     st.write("---")
