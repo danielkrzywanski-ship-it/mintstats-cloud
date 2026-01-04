@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v15.3 Strategy Master", layout="wide")
+st.set_page_config(page_title="MintStats v15.4 Tactical", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -235,8 +235,11 @@ def evaluate_bet(bet_type, row):
             if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
         if bet_type == "Over 2.5": return goals > 2.5
+        if bet_type == "Over 1.5": return goals > 1.5
         if bet_type == "Over 0.5": return goals > 0.5
         if bet_type == "Under 4.5": return goals <= 4.5
+        if bet_type == "Under 3.5": return goals <= 3.5
+        if bet_type == "Under 2.5": return goals <= 2.5
         if bet_type == "BTS": return fthg > 0 and ftag > 0
         if bet_type == "1X": return fthg >= ftag
         if bet_type == "X2": return ftag >= fthg
@@ -441,6 +444,7 @@ class PoissonModel:
             "Over_1.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Over_2.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5]),
             "Over_0.5_FT": 1.0 - prob_0_0,
+            "Under_2.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 2.5]),
             "Under_3.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
@@ -458,36 +462,46 @@ class CouponGenerator:
             
             potential_bets = []
             
-            # --- DEFINICJE STRATEGII (5 TYPÓW) ---
+            # --- DEFINICJE STRATEGII (ROZSZERZONE) ---
             
-            # 1. GENERATOR BEZPIECZNY (RÓWNOMIERNY)
+            # 1. MIX BEZPIECZNY (RÓWNOMIERNY)
             if "Mix Bezpieczny" in strategy:
-                # Kategoria: Podpórki
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC'})
-                # Kategoria: Gole
                 potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O'})
                 potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O'})
-                # Kategoria: Drużyny
                 potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM'})
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM'})
 
-            # 2. GENERATOR PODWÓJNA SZANSA
+            # 2. PODWÓJNA SZANSA
             elif "Podwójna Szansa" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN'})
 
-            # 3. GENERATOR GOLE AGRESYWNE
+            # 3. GOLE AGRESYWNE
             elif "Gole Agresywne" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'})
 
-            # 4. GENERATOR DO PRZERWY
+            # 4. DO PRZERWY
             elif "Do Przerwy" in strategy:
                 potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN'})
 
-            # 5. GENERATOR WSZYSTKIE (ALL IN)
+            # 5. TWIERDZA (HOME WIN)
+            elif "Twierdza" in strategy:
+                potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN'})
+
+            # 6. MUR OBRONNY (UNDER)
+            elif "Mur Obronny" in strategy:
+                potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN'})
+
+            # 7. ZŁOTY ŚRODEK (OVER 1.5)
+            elif "Złoty Środek" in strategy:
+                potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN'})
+
+            # 8. WSZYSTKIE (ALL IN)
             elif "Wszystkie" in strategy:
                 potential_bets = [
                     {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN'}, {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN'},
@@ -496,7 +510,6 @@ class CouponGenerator:
                     {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'}
                 ]
 
-            # Wybierz najlepszy typ dla tego meczu w danej strategii
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
                 res.append({
@@ -516,7 +529,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v15.3: Strategy Master")
+st.title("☁️ MintStats v15.4: Tactical")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -679,6 +692,9 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             "Podwójna Szansa (1X, X2, 12)",
             "Gole Agresywne (BTS, O2.5)",
             "Do Przerwy (HT O1.5)",
+            "Twierdza (Home Win)",
+            "Mur Obronny (Under 2.5/3.5)",
+            "Złoty Środek (Over 1.5)",
             "Wszystkie Zdarzenia (Max Pewność)"
         ])
         with c3:
