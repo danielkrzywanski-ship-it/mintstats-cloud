@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v18.0 Analytical Beast", layout="wide")
+st.set_page_config(page_title="MintStats v18.1 Goal Simulator", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -385,7 +385,7 @@ class PoissonModel:
         self.team_stats_ft = {}
         self.team_stats_ht = {}
         self.team_form = {} 
-        self.team_chaos = {} # Nowy wskaźnik
+        self.team_chaos = {} 
         self.league_avg_ft = 1.0
         self.league_avg_ht = 1.0
         self.home_adv_factor = 1.15
@@ -440,7 +440,7 @@ class PoissonModel:
             
             self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost}
 
-            # 2. Chaos (Standard Deviation) - Cały sezon
+            # 2. Chaos (Standard Deviation)
             all_matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)]
             goals_sequence = []
             for _, row in all_matches.iterrows():
@@ -449,8 +449,6 @@ class PoissonModel:
             
             if len(goals_sequence) > 3:
                 std_dev = np.std(goals_sequence)
-                # Interpretacja: StdDev > 1.5 to duży chaos (wyniki typu 0, 4, 1, 5)
-                # StdDev < 0.8 to stabilność (wyniki typu 1, 1, 2, 1)
                 chaos_rating = "Stabilny 🧊" if std_dev < 0.9 else ("Chaos 🌪️" if std_dev > 1.4 else "Norma")
                 chaos_penalty = 0.9 if std_dev > 1.4 else (1.05 if std_dev < 0.9 else 1.0)
                 self.team_chaos[team] = {'rating': chaos_rating, 'factor': chaos_penalty}
@@ -469,22 +467,42 @@ class PoissonModel:
         if len(h2h_matches) >= 3 and home_wins == 0: return "⚠️ H2H (Kryptonit!)"
         return None
 
-    # --- MONTE CARLO SIMULATION ---
+    # --- MONTE CARLO SIMULATION (ROZBUDOWANE DLA GOLI) ---
     def simulate_match_monte_carlo(self, xg_h, xg_a, n=1000):
         # Symulacja 1000 meczów z lekkim szumem (noise)
         home_wins = 0
+        draws = 0
+        away_wins = 0
+        over_2_5 = 0
+        over_1_5 = 0
+        bts_yes = 0
+        
         for _ in range(n):
-            # Dodajemy losowy szum do xG (form dyspozycja dnia +/- 20%)
+            # Dodajemy losowy szum do xG (+/- 20%)
             adj_h = xg_h * np.random.uniform(0.8, 1.2)
             adj_a = xg_a * np.random.uniform(0.8, 1.2)
             
             sim_h_goals = np.random.poisson(adj_h)
             sim_a_goals = np.random.poisson(adj_a)
             
+            # Zwycięzca
             if sim_h_goals > sim_a_goals: home_wins += 1
+            elif sim_h_goals == sim_a_goals: draws += 1
+            else: away_wins += 1
             
-        stability = (home_wins / n) * 100
-        return stability
+            # Gole
+            if (sim_h_goals + sim_a_goals) > 2.5: over_2_5 += 1
+            if (sim_h_goals + sim_a_goals) > 1.5: over_1_5 += 1
+            if sim_h_goals > 0 and sim_a_goals > 0: bts_yes += 1
+            
+        return {
+            '1': (home_wins/n)*100,
+            'X': (draws/n)*100,
+            '2': (away_wins/n)*100,
+            'Over 2.5': (over_2_5/n)*100,
+            'Over 1.5': (over_1_5/n)*100,
+            'BTS': (bts_yes/n)*100
+        }
 
     def predict(self, home, away):
         if home not in self.team_stats_ft or away not in self.team_stats_ft: return None, None, None, None
@@ -525,7 +543,7 @@ class PoissonModel:
             "Under_3.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
-            "Home_Yes": 1.0 - poisson.pmf(0, xg_h_ft), "Away_Yes": 1.0 - poisson.pmf(0, xg_a_ft)
+            "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0
         }
     
     def get_team_info(self, team):
@@ -547,21 +565,18 @@ class CouponGenerator:
             form_h, chaos_h = self.model.get_team_info(m['Home'])
             form_a, chaos_a = self.model.get_team_info(m['Away'])
             
-            # --- ZASTOSOWANIE CZYNNIKA CHAOSU ---
-            # Mnożymy prawdopodobieństwo przez czynnik stabilności
+            # --- CHAOS FACTOR ---
             chaos_factor = chaos_h['factor'] * chaos_a['factor']
-            # Spłaszczamy pewność (np. 0.8 * 0.9 = 0.72)
             for key in probs: probs[key] *= chaos_factor
 
-            # --- MONTE CARLO (Dla typów na zwycięstwo) ---
-            mc_stability = self.model.simulate_match_monte_carlo(xg_h, xg_a)
+            # --- MONTE CARLO (GOAL SIMULATOR) ---
+            mc_stats = self.model.simulate_match_monte_carlo(xg_h, xg_a)
             
             warning = ""
             if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
             if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
             if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
 
-            # Opis chaosu do tabeli
             chaos_desc = ""
             if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
             if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
@@ -570,54 +585,61 @@ class CouponGenerator:
             potential_bets = []
             
             if "Mix Bezpieczny" in strategy:
-                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC'})
-                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC'})
-                potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O'})
-                potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O'})
-                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM'})
-                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM'})
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC', 'mc_key': '2'})
+                potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM', 'mc_key': None})
 
             elif "Podwójna Szansa" in strategy:
-                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'})
-                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'})
-                potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'})
+                potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN', 'mc_key': None})
 
             elif "Gole Agresywne" in strategy:
-                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'})
-                potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+                potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'})
 
             elif "Do Przerwy" in strategy:
-                potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN', 'mc_key': None})
 
             elif "Twierdza" in strategy:
-                potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'})
 
             elif "Mur Obronny" in strategy:
-                potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN'})
-                potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
 
             elif "Złoty Środek" in strategy:
-                potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
 
             elif "Wszystkie" in strategy:
                 potential_bets = [
-                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN'}, {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN'},
-                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'}, {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'},
-                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'}, {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN'},
-                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'}
+                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'},
+                    {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
+                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
                 ]
 
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
-                
                 combined_form = f"{form_h} vs {form_a}"
                 if warning: combined_form += f" {warning}"
                 
-                # Dodajemy info o stabilności do tabeli (tylko dla typów na wygraną)
+                # --- PRZYPISANIE WYNIKU MONTE CARLO ---
                 mc_info = ""
-                if "Win" in best['typ'] or "1X" in best['typ']:
-                    if mc_stability > 80: mc_info = " (MC: 80%+)"
-                    elif mc_stability < 50 and probs['1'] > 0.5: mc_info = " (MC: RYZYKO)"
+                key = best.get('mc_key')
+                if key and key in mc_stats:
+                    val = mc_stats[key]
+                    if "1" in key or "2" in key: # Dla zwycięstw
+                        if val > 80: mc_info = " (MC: 80%+)"
+                        elif val < 50 and best['prob'] > 0.5: mc_info = " (MC: RYZYKO)"
+                    else: # Dla goli (BTS, Over)
+                        mc_info = f" (MC: {int(val)}%)"
 
                 res.append({
                     'Mecz': f"{m['Home']} - {m['Away']}", 
@@ -638,7 +660,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v18.0: Analytical Beast")
+st.title("☁️ MintStats v18.1: Goal Simulator")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
