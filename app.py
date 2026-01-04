@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v18.1 Goal Simulator", layout="wide")
+st.set_page_config(page_title="MintStats v18.2 Stable", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -107,7 +107,10 @@ LEAGUE_NAMES = {
     'N1': '🇳🇱 Holandia - Eredivisie', 'P1': '🇵🇹 Portugalia - Liga Portugal',
     'B1': '🇧🇪 Belgia - Jupiler League', 'T1': '🇹🇷 Turcja - Super Lig',
     'G1': '🇬🇷 Grecja - Super League', 'SC0': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Premiership',
-    'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa'
+    'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa',
+    # --- NOWE LIGI ---
+    'AUT': '🇦🇹 Austria', 'DNK': '🇩🇰 Dania', 'FIN': '🇫🇮 Finlandia',
+    'NOR': '🇳🇴 Norwegia', 'ROU': '🇷🇴 Rumunia', 'SWE': '🇸🇪 Szwecja', 'SWZ': '🇨🇭 Szwajcaria'
 }
 
 # --- FUNKCJE I BAZA DANYCH ---
@@ -530,7 +533,11 @@ class PoissonModel:
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
-        prob_0_0 = poisson.pmf(0, xg_h_ft) * poisson.pmf(0, xg_a_ft)
+        
+        # --- FIX: Definiowanie zmiennych przed użyciem ---
+        prob_home_0 = poisson.pmf(0, xg_h_ft)
+        prob_away_0 = poisson.pmf(0, xg_a_ft)
+        prob_0_0 = prob_home_0 * prob_away_0
 
         return {
             "1": prob_1, "X": prob_x, "2": prob_2, 
@@ -660,7 +667,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v18.1: Goal Simulator")
+st.title("☁️ MintStats v18.2: Stable Fix")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
