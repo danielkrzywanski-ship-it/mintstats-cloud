@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v17.1 Adaptive AI", layout="wide")
+st.set_page_config(page_title="MintStats v18.0 Analytical Beast", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -183,7 +183,8 @@ def save_new_coupon(name, coupon_data):
             'Date': bet.get('Date', 'N/A'),
             'Pewność': bet['Pewność'],
             'Result': '?',
-            'Forma': bet.get('Forma', '')
+            'Forma': bet.get('Forma', ''),
+            'Stabilność': bet.get('Stabilność', '')
         })
     new_entry = {
         'ID': new_id,
@@ -377,84 +378,84 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- MODEL POISSONA Z ADAPTACYJNYM ATUTEM GOSPODARZA ---
+# --- MODEL POISSONA Z CHAOSEM I MONTE CARLO ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
         self.team_stats_ft = {}
         self.team_stats_ht = {}
         self.team_form = {} 
+        self.team_chaos = {} # Nowy wskaźnik
         self.league_avg_ft = 1.0
         self.league_avg_ht = 1.0
-        self.home_adv_factor = 1.15 # Domyślna
+        self.home_adv_factor = 1.15
         
         if not data.empty:
             self.data = self.data.sort_values(by='Date')
             self._calculate_strength()
-            self._calculate_form()
+            self._calculate_form_and_chaos()
 
     def _calculate_strength(self):
         lg_ft = self.data['FTHG'].sum() + self.data['FTAG'].sum()
         matches = len(self.data) * 2
         self.league_avg_ft = lg_ft / matches if matches > 0 else 1.0
-
-        # --- OBLICZANIE DYNAMICZNEGO ATUTU GOSPODARZA ---
-        home_goals_total = self.data['FTHG'].sum()
-        away_goals_total = self.data['FTAG'].sum()
         
-        if away_goals_total > 0:
-            # Stosunek goli dom/wyjazd. Np. 1.25 oznacza 25% więcej goli u siebie.
-            self.home_adv_factor = home_goals_total / away_goals_total
-        else:
-            self.home_adv_factor = 1.15 # Fallback
+        home_goals = self.data['FTHG'].sum(); away_goals = self.data['FTAG'].sum()
+        if away_goals > 0: self.home_adv_factor = home_goals / away_goals
 
         has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
-        if has_ht:
-            lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum()
-            self.league_avg_ht = lg_ht / matches if matches > 0 else 1.0
+        if has_ht: lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum(); self.league_avg_ht = lg_ht / matches if matches > 0 else 1.0
         
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
         for team in teams:
-            home = self.data[self.data['HomeTeam'] == team]
-            away = self.data[self.data['AwayTeam'] == team]
-            scored_ft = home['FTHG'].sum() + away['FTAG'].sum()
-            conceded_ft = home['FTAG'].sum() + away['FTHG'].sum()
+            home = self.data[self.data['HomeTeam'] == team]; away = self.data[self.data['AwayTeam'] == team]
+            scored_ft = home['FTHG'].sum() + away['FTAG'].sum(); conceded_ft = home['FTAG'].sum() + away['FTHG'].sum()
             played = len(home) + len(away)
             if played > 0:
-                self.team_stats_ft[team] = {
-                    'attack': (scored_ft / played) / self.league_avg_ft,
-                    'defense': (conceded_ft / played) / self.league_avg_ft
-                }
+                self.team_stats_ft[team] = {'attack': (scored_ft/played)/self.league_avg_ft, 'defense': (conceded_ft/played)/self.league_avg_ft}
                 if has_ht:
-                    scored_ht = home['HTHG'].sum() + away['HTAG'].sum()
-                    conceded_ht_real = home['HTAG'].sum() + away['HTHG'].sum()
-                    self.team_stats_ht[team] = {
-                        'attack': (scored_ht / played) / self.league_avg_ht,
-                        'defense': (conceded_ht_real / played) / self.league_avg_ht
-                    }
+                    scored_ht = home['HTHG'].sum() + away['HTAG'].sum(); conceded_ht = home['HTAG'].sum() + away['HTHG'].sum()
+                    self.team_stats_ht[team] = {'attack': (scored_ht/played)/self.league_avg_ht, 'defense': (conceded_ht/played)/self.league_avg_ht}
 
-    def _calculate_form(self):
+    def _calculate_form_and_chaos(self):
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
         for team in teams:
+            # 1. Forma (Ostatnie 5)
             matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)].tail(5)
             form_icons = []
             scored_recent = 0
             for _, row in matches.iterrows():
                 is_home = row['HomeTeam'] == team
-                goals_for = row['FTHG'] if is_home else row['FTAG']
-                goals_against = row['FTAG'] if is_home else row['FTHG']
-                scored_recent += goals_for
-                if goals_for > goals_against: form_icons.append("🟢")
-                elif goals_for == goals_against: form_icons.append("🤝")
+                gf = row['FTHG'] if is_home else row['FTAG']
+                ga = row['FTAG'] if is_home else row['FTHG']
+                scored_recent += gf
+                if gf > ga: form_icons.append("🟢")
+                elif gf == ga: form_icons.append("🤝")
                 else: form_icons.append("🔴")
             
-            form_str = "".join(reversed(form_icons))
-            played = len(matches)
             att_boost = 1.0
-            if played > 0:
-                avg_scored = scored_recent / played
+            if len(matches) > 0:
+                avg_scored = scored_recent / len(matches)
                 att_boost = 1.0 + (avg_scored * 0.05)
-            self.team_form[team] = {'icons': form_str, 'att_boost': att_boost}
+            
+            self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost}
+
+            # 2. Chaos (Standard Deviation) - Cały sezon
+            all_matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)]
+            goals_sequence = []
+            for _, row in all_matches.iterrows():
+                gf = row['FTHG'] if row['HomeTeam'] == team else row['FTAG']
+                goals_sequence.append(gf)
+            
+            if len(goals_sequence) > 3:
+                std_dev = np.std(goals_sequence)
+                # Interpretacja: StdDev > 1.5 to duży chaos (wyniki typu 0, 4, 1, 5)
+                # StdDev < 0.8 to stabilność (wyniki typu 1, 1, 2, 1)
+                chaos_rating = "Stabilny 🧊" if std_dev < 0.9 else ("Chaos 🌪️" if std_dev > 1.4 else "Norma")
+                chaos_penalty = 0.9 if std_dev > 1.4 else (1.05 if std_dev < 0.9 else 1.0)
+                self.team_chaos[team] = {'rating': chaos_rating, 'factor': chaos_penalty}
+            else:
+                self.team_chaos[team] = {'rating': "Brak danych", 'factor': 1.0}
 
     def get_h2h_analysis(self, home, away):
         mask = ((self.data['HomeTeam'] == home) & (self.data['AwayTeam'] == away)) | \
@@ -463,33 +464,44 @@ class PoissonModel:
         if h2h_matches.empty: return None
         home_wins = 0
         for _, row in h2h_matches.iterrows():
-            if row['HomeTeam'] == home:
-                if row['FTHG'] > row['FTAG']: home_wins += 1
-            else:
-                if row['FTAG'] > row['FTHG']: home_wins += 1
-        if len(h2h_matches) >= 3 and home_wins == 0:
-            return "⚠️ H2H (Kryptonit!)"
+            if (row['HomeTeam'] == home and row['FTHG'] > row['FTAG']) or (row['AwayTeam'] == home and row['FTAG'] > row['FTHG']):
+                home_wins += 1
+        if len(h2h_matches) >= 3 and home_wins == 0: return "⚠️ H2H (Kryptonit!)"
         return None
+
+    # --- MONTE CARLO SIMULATION ---
+    def simulate_match_monte_carlo(self, xg_h, xg_a, n=1000):
+        # Symulacja 1000 meczów z lekkim szumem (noise)
+        home_wins = 0
+        for _ in range(n):
+            # Dodajemy losowy szum do xG (form dyspozycja dnia +/- 20%)
+            adj_h = xg_h * np.random.uniform(0.8, 1.2)
+            adj_a = xg_a * np.random.uniform(0.8, 1.2)
+            
+            sim_h_goals = np.random.poisson(adj_h)
+            sim_a_goals = np.random.poisson(adj_a)
+            
+            if sim_h_goals > sim_a_goals: home_wins += 1
+            
+        stability = (home_wins / n) * 100
+        return stability
 
     def predict(self, home, away):
         if home not in self.team_stats_ft or away not in self.team_stats_ft: return None, None, None, None
         
-        h_att = self.team_stats_ft[home]['attack']
-        h_def = self.team_stats_ft[home]['defense']
-        a_att = self.team_stats_ft[away]['attack']
-        a_def = self.team_stats_ft[away]['defense']
+        h_att = self.team_stats_ft[home]['attack']; h_def = self.team_stats_ft[home]['defense']
+        a_att = self.team_stats_ft[away]['attack']; a_def = self.team_stats_ft[away]['defense']
         
+        # Boost formy
         if home in self.team_form: h_att *= self.team_form[home]['att_boost']
         if away in self.team_form: a_att *= self.team_form[away]['att_boost']
         
-        # Użycie dynamicznego home_adv_factor
         xg_h_ft = h_att * a_def * self.league_avg_ft * self.home_adv_factor
         xg_a_ft = a_att * h_def * self.league_avg_ft
         
         xg_h_ht, xg_a_ht = 0.0, 0.0
         if home in self.team_stats_ht and away in self.team_stats_ht:
-            # HT też lekko skalujemy (np. 80% siły FT)
-            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * (self.home_adv_factor * 0.9)
+            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.05
             xg_a_ht = self.team_stats_ht[away]['attack'] * self.team_stats_ht[home]['defense'] * self.league_avg_ht
             
         return xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht
@@ -500,9 +512,7 @@ class PoissonModel:
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
-        prob_home_0 = poisson.pmf(0, xg_h_ft)
-        prob_away_0 = poisson.pmf(0, xg_a_ft)
-        prob_0_0 = prob_home_0 * prob_away_0
+        prob_0_0 = poisson.pmf(0, xg_h_ft) * poisson.pmf(0, xg_a_ft)
 
         return {
             "1": prob_1, "X": prob_x, "2": prob_2, 
@@ -515,12 +525,13 @@ class PoissonModel:
             "Under_3.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
-            "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0
+            "Home_Yes": 1.0 - poisson.pmf(0, xg_h_ft), "Away_Yes": 1.0 - poisson.pmf(0, xg_a_ft)
         }
     
-    def get_team_form_icons(self, team):
-        if team in self.team_form: return self.team_form[team]['icons']
-        return "⚪⚪⚪⚪⚪"
+    def get_team_info(self, team):
+        form = self.team_form.get(team, {'icons': '⚪', 'att_boost': 1.0})['icons']
+        chaos = self.team_chaos.get(team, {'rating': '-', 'factor': 1.0})
+        return form, chaos
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
@@ -531,14 +542,30 @@ class CouponGenerator:
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             
+            # Pobierz dane analityczne
             h2h_warning = self.model.get_h2h_analysis(m['Home'], m['Away'])
-            form_h = self.model.get_team_form_icons(m['Home'])
-            form_a = self.model.get_team_form_icons(m['Away'])
+            form_h, chaos_h = self.model.get_team_info(m['Home'])
+            form_a, chaos_a = self.model.get_team_info(m['Away'])
+            
+            # --- ZASTOSOWANIE CZYNNIKA CHAOSU ---
+            # Mnożymy prawdopodobieństwo przez czynnik stabilności
+            chaos_factor = chaos_h['factor'] * chaos_a['factor']
+            # Spłaszczamy pewność (np. 0.8 * 0.9 = 0.72)
+            for key in probs: probs[key] *= chaos_factor
+
+            # --- MONTE CARLO (Dla typów na zwycięstwo) ---
+            mc_stability = self.model.simulate_match_monte_carlo(xg_h, xg_a)
             
             warning = ""
             if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
             if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
             if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
+
+            # Opis chaosu do tabeli
+            chaos_desc = ""
+            if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
+            if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
+            if "🧊" in chaos_h['rating'] and "🧊" in chaos_a['rating']: chaos_desc = "🧊 STABLE"
 
             potential_bets = []
             
@@ -582,17 +609,25 @@ class CouponGenerator:
 
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
+                
                 combined_form = f"{form_h} vs {form_a}"
                 if warning: combined_form += f" {warning}"
                 
+                # Dodajemy info o stabilności do tabeli (tylko dla typów na wygraną)
+                mc_info = ""
+                if "Win" in best['typ'] or "1X" in best['typ']:
+                    if mc_stability > 80: mc_info = " (MC: 80%+)"
+                    elif mc_stability < 50 and probs['1'] > 0.5: mc_info = " (MC: RYZYKO)"
+
                 res.append({
                     'Mecz': f"{m['Home']} - {m['Away']}", 
                     'Liga': m.get('League', 'N/A'), 
                     'Date': m.get('Date', 'N/A'),
-                    'Typ': best['typ'], 
+                    'Typ': best['typ'] + mc_info, 
                     'Pewność': best['prob'], 
                     'Kategoria': best.get('cat', 'MAIN'),
                     'Forma': combined_form,
+                    'Stabilność': chaos_desc,
                     'xG': f"{xg_h:.2f}:{xg_a:.2f}"
                 })
         return res
@@ -603,7 +638,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v17.1: Adaptive AI")
+st.title("☁️ MintStats v18.0: Analytical Beast")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -820,7 +855,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     st.subheader(f"🎫 {kupon['name']}")
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
-                        disp_cols = ['Date', 'Mecz', 'Forma', 'Liga', 'Typ', 'Pewność', 'xG']
+                        disp_cols = ['Date', 'Mecz', 'Forma', 'Stabilność', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
                         st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
                     else: st.warning("Brak typów.")
