@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v15.4 Tactical", layout="wide")
+st.set_page_config(page_title="MintStats v16.0 Trendometer", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -182,7 +182,8 @@ def save_new_coupon(name, coupon_data):
             'Typ': bet['Typ'],
             'Date': bet.get('Date', 'N/A'),
             'Pewność': bet['Pewność'],
-            'Result': '?' 
+            'Result': '?',
+            'Forma': bet.get('Forma', '') # Zapisz info o formie
         })
     new_entry = {
         'ID': new_id,
@@ -376,15 +377,20 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- MODEL POISSONA ---
+# --- MODEL POISSONA Z WAŻENIEM FORMY ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
         self.team_stats_ft = {}
         self.team_stats_ht = {}
+        self.team_form = {} # Słownik na formę
         self.league_avg_ft = 1.0
         self.league_avg_ht = 1.0
-        if not data.empty: self._calculate_strength()
+        if not data.empty:
+            # Sortujemy datami, żeby forma była liczona chronologicznie
+            self.data = self.data.sort_values(by='Date')
+            self._calculate_strength()
+            self._calculate_form()
 
     def _calculate_strength(self):
         lg_ft = self.data['FTHG'].sum() + self.data['FTAG'].sum()
@@ -416,14 +422,71 @@ class PoissonModel:
                         'defense': (conceded_ht_real / played) / self.league_avg_ht
                     }
 
+    def _calculate_form(self):
+        # Analiza ostatnich 5 meczów dla każdej drużyny
+        teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
+        for team in teams:
+            # Wyciągnij mecze gdzie grał ten zespół
+            matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)].tail(5)
+            
+            form_icons = []
+            scored_recent = 0
+            conceded_recent = 0
+            
+            for _, row in matches.iterrows():
+                is_home = row['HomeTeam'] == team
+                goals_for = row['FTHG'] if is_home else row['FTAG']
+                goals_against = row['FTAG'] if is_home else row['FTHG']
+                
+                scored_recent += goals_for
+                conceded_recent += goals_against
+                
+                if goals_for > goals_against: form_icons.append("🟢") # Win
+                elif goals_for == goals_against: form_icons.append("🤝") # Draw
+                else: form_icons.append("🔴") # Loss
+            
+            # Odwróć, żeby najnowszy był z lewej
+            form_str = "".join(reversed(form_icons))
+            
+            # Oblicz mnożnik formy (prosty model)
+            # Jeśli średnia goli w ostatnich 5 meczach jest wyższa niż w sezonie -> boost ataku
+            played = len(matches)
+            att_boost = 1.0
+            def_boost = 1.0
+            
+            if played > 0:
+                avg_scored = scored_recent / played
+                # Porównanie z bazową siłą ataku (szacunkowo)
+                # To jest uproszczenie dla stabilności
+                att_boost = 1.0 + (avg_scored * 0.05) # Delikatny boost za bramki
+            
+            self.team_form[team] = {
+                'icons': form_str,
+                'att_boost': att_boost,
+                'def_boost': def_boost
+            }
+
     def predict(self, home, away):
         if home not in self.team_stats_ft or away not in self.team_stats_ft: return None, None, None, None
-        xg_h_ft = self.team_stats_ft[home]['attack'] * self.team_stats_ft[away]['defense'] * self.league_avg_ft * 1.15
-        xg_a_ft = self.team_stats_ft[away]['attack'] * self.team_stats_ft[home]['defense'] * self.league_avg_ft
+        
+        # Pobierz bazowe statystyki
+        h_att = self.team_stats_ft[home]['attack']
+        h_def = self.team_stats_ft[home]['defense']
+        a_att = self.team_stats_ft[away]['attack']
+        a_def = self.team_stats_ft[away]['defense']
+        
+        # Zastosuj modyfikatory formy (jeśli istnieją)
+        if home in self.team_form: h_att *= self.team_form[home]['att_boost']
+        if away in self.team_form: a_att *= self.team_form[away]['att_boost']
+        
+        xg_h_ft = h_att * a_def * self.league_avg_ft * 1.15
+        xg_a_ft = a_att * h_def * self.league_avg_ft
+        
         xg_h_ht, xg_a_ht = 0.0, 0.0
         if home in self.team_stats_ht and away in self.team_stats_ht:
             xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.10
             xg_a_ht = self.team_stats_ht[away]['attack'] * self.team_stats_ht[home]['defense'] * self.league_avg_ht
+            
         return xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht
 
     def calculate_probs(self, xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht):
@@ -450,6 +513,10 @@ class PoissonModel:
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0
         }
+    
+    def get_team_form_icons(self, team):
+        if team in self.team_form: return self.team_form[team]['icons']
+        return "⚪⚪⚪⚪⚪" # Brak danych
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
@@ -460,9 +527,16 @@ class CouponGenerator:
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             
-            potential_bets = []
+            # Pobierz ikony formy
+            form_h = self.model.get_team_form_icons(m['Home'])
+            form_a = self.model.get_team_form_icons(m['Away'])
             
-            # --- DEFINICJE STRATEGII (ROZSZERZONE) ---
+            # Wykrywacz kryzysu (3 porażki z rzędu u faworyta)
+            warning = ""
+            if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
+            if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
+            
+            potential_bets = []
             
             # 1. MIX BEZPIECZNY (RÓWNOMIERNY)
             if "Mix Bezpieczny" in strategy:
@@ -512,6 +586,11 @@ class CouponGenerator:
 
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
+                
+                # Złożony string formy
+                combined_form = f"{form_h} vs {form_a}"
+                if warning: combined_form += f" {warning}"
+                
                 res.append({
                     'Mecz': f"{m['Home']} - {m['Away']}", 
                     'Liga': m.get('League', 'N/A'), 
@@ -519,6 +598,7 @@ class CouponGenerator:
                     'Typ': best['typ'], 
                     'Pewność': best['prob'], 
                     'Kategoria': best.get('cat', 'MAIN'),
+                    'Forma': combined_form,
                     'xG': f"{xg_h:.2f}:{xg_a:.2f}"
                 })
         return res
@@ -529,7 +609,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v15.4: Tactical")
+st.title("☁️ MintStats v16.0: Trendometer")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -746,7 +826,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     st.subheader(f"🎫 {kupon['name']}")
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
-                        disp_cols = ['Date', 'Mecz', 'Liga', 'Typ', 'Pewność', 'xG']
+                        disp_cols = ['Date', 'Mecz', 'Forma', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
                         st.caption(f"Średnia pewność: {df_k['Pewność'].mean()*100:.1f}%")
                     else: st.warning("Brak typów.")
