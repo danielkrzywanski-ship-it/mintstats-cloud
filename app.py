@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v15.1 Traveler", layout="wide")
+st.set_page_config(page_title="MintStats v15.3 Strategy Master", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -235,10 +235,15 @@ def evaluate_bet(bet_type, row):
             if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
         if bet_type == "Over 2.5": return goals > 2.5
+        if bet_type == "Over 0.5": return goals > 0.5
         if bet_type == "Under 4.5": return goals <= 4.5
         if bet_type == "BTS": return fthg > 0 and ftag > 0
         if bet_type == "1X": return fthg >= ftag
         if bet_type == "X2": return ftag >= fthg
+        if bet_type == "12": return fthg != ftag
+        if "strzeli" in bet_type:
+            if row['HomeTeam'] in bet_type: return fthg > 0
+            if row['AwayTeam'] in bet_type: return ftag > 0
         if "HT Over 1.5" in bet_type:
             if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
             return False
@@ -246,7 +251,6 @@ def evaluate_bet(bet_type, row):
     return False
 
 def check_team_conflict(home, away, pool):
-    # W v15+ blokujemy tylko identyczne pary (home-away)
     for m in pool:
         if m['Home'] == home and m['Away'] == away:
             return f"⛔ Mecz {home} vs {away} jest już na liście!"
@@ -425,58 +429,83 @@ class PoissonModel:
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
-        bts_yes = np.sum(mat_ft[1:, 1:])
+        
+        prob_home_0 = poisson.pmf(0, xg_h_ft)
+        prob_away_0 = poisson.pmf(0, xg_a_ft)
+        prob_0_0 = prob_home_0 * prob_away_0
+
         return {
-            "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2,
-            "BTS_Yes": bts_yes, "BTS_No": 1.0-bts_yes,
+            "1": prob_1, "X": prob_x, "2": prob_2, 
+            "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
+            "BTS_Yes": np.sum(mat_ft[1:, 1:]), "BTS_No": 1.0-np.sum(mat_ft[1:, 1:]),
             "Over_1.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Over_2.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5]),
+            "Over_0.5_FT": 1.0 - prob_0_0,
             "Under_3.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
-            "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5])
+            "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
+            "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0
         }
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
-    def analyze_pool(self, pool, strategy="Smart Mix"):
+    def analyze_pool(self, pool, strategy="Mix Bezpieczny"):
         res = []
         for m in pool:
             xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             
-            potential_bets = [
-                {'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'WIN'},
-                {'typ': f"Win {m['Away']}", 'prob': probs['2'], 'cat': 'WIN'},
-                {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'GOAL'},
-                {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'GOAL'},
-                {'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'GOAL'},
-                {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'SAFE'},
-                {'typ': "1X", 'prob': probs['1X'], 'cat': 'SAFE'},
-                {'typ': "X2", 'prob': probs['X2'], 'cat': 'SAFE'}
-            ]
+            potential_bets = []
             
-            selected_bet = None
-            if strategy == "Smart Mix (Zróżnicowany)":
+            # --- DEFINICJE STRATEGII (5 TYPÓW) ---
+            
+            # 1. GENERATOR BEZPIECZNY (RÓWNOMIERNY)
+            if "Mix Bezpieczny" in strategy:
+                # Kategoria: Podpórki
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC'})
+                # Kategoria: Gole
+                potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O'})
+                potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O'})
+                # Kategoria: Drużyny
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM'})
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM'})
+
+            # 2. GENERATOR PODWÓJNA SZANSA
+            elif "Podwójna Szansa" in strategy:
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN'})
+
+            # 3. GENERATOR GOLE AGRESYWNE
+            elif "Gole Agresywne" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'})
+                potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'})
+
+            # 4. GENERATOR DO PRZERWY
+            elif "Do Przerwy" in strategy:
+                potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN'})
+
+            # 5. GENERATOR WSZYSTKIE (ALL IN)
+            elif "Wszystkie" in strategy:
+                potential_bets = [
+                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN'}, {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN'},
+                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'}, {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'},
+                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'}, {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN'},
+                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'}
+                ]
+
+            # Wybierz najlepszy typ dla tego meczu w danej strategii
+            if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
-                selected_bet = best
-            elif strategy == "1 (Gospodarz)": selected_bet = {'typ': f"Win {m['Home']}", 'prob': probs['1']}
-            elif strategy == "2 (Gość)": selected_bet = {'typ': f"Win {m['Away']}", 'prob': probs['2']}
-            elif strategy == "Over 2.5": selected_bet = {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT']}
-            elif strategy == "Under 4.5": selected_bet = {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT']}
-            elif strategy == "1. Połowa Over 1.5": selected_bet = {'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT']}
-            elif strategy == "BTS Tak": selected_bet = {'typ': "BTS", 'prob': probs['BTS_Yes']}
-            elif strategy == "1X": selected_bet = {'typ': "1X", 'prob': probs['1X']}
-            elif strategy == "X2": selected_bet = {'typ': "X2", 'prob': probs['X2']}
-            
-            if selected_bet:
                 res.append({
                     'Mecz': f"{m['Home']} - {m['Away']}", 
                     'Liga': m.get('League', 'N/A'), 
                     'Date': m.get('Date', 'N/A'),
-                    'Typ': selected_bet['typ'], 
-                    'Pewność': selected_bet['prob'], 
-                    'Kategoria': selected_bet.get('cat', 'OTHER'),
+                    'Typ': best['typ'], 
+                    'Pewność': best['prob'], 
+                    'Kategoria': best.get('cat', 'MAIN'),
                     'xG': f"{xg_h:.2f}:{xg_a:.2f}"
                 })
         return res
@@ -487,7 +516,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v15.1: Traveler")
+st.title("☁️ MintStats v15.3: Strategy Master")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -496,29 +525,23 @@ mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Kopia Zapasowa (Praca <-> Dom)")
 
-# 1. POBIERANIE (EXPORT)
 if st.sidebar.button("📦 Przygotuj Paczkę (Export)"):
-    # Zapisz obecny stan do plików
     save_fixture_pool(st.session_state.fixture_pool)
-    # Odczytaj jako bajty
     try:
         with open(FIXTURES_DB_FILE, "rb") as f:
             st.sidebar.download_button("⬇️ Pobierz Terminarz", f, file_name="terminarz_backup.csv", mime="text/csv")
     except: st.sidebar.warning("Brak terminarza.")
-    
     try:
         with open(COUPONS_DB_FILE, "rb") as f:
             st.sidebar.download_button("⬇️ Pobierz Kupony", f, file_name="kupony_backup.csv", mime="text/csv")
     except: st.sidebar.warning("Brak kuponów.")
 
-# 2. WGRYWANIE (IMPORT)
 st.sidebar.markdown("---")
 uploaded_backup_fix = st.sidebar.file_uploader("Wgraj Terminarz (CSV)", type=['csv'])
 if uploaded_backup_fix:
     if st.sidebar.button("♻️ Przywróć Terminarz"):
         try:
             df = pd.read_csv(uploaded_backup_fix)
-            # Upewnij się co do daty
             if 'Date' not in df.columns: df['Date'] = datetime.today().strftime('%Y-%m-%d')
             st.session_state.fixture_pool = df.to_dict('records')
             save_fixture_pool(st.session_state.fixture_pool)
@@ -530,14 +553,10 @@ uploaded_backup_coup = st.sidebar.file_uploader("Wgraj Kupony (CSV)", type=['csv
 if uploaded_backup_coup:
     if st.sidebar.button("♻️ Przywróć Kupony"):
         try:
-            # Zapisz bezpośrednio na dysk
-            with open(COUPONS_DB_FILE, "wb") as f:
-                f.write(uploaded_backup_coup.getbuffer())
+            with open(COUPONS_DB_FILE, "wb") as f: f.write(uploaded_backup_coup.getbuffer())
             st.sidebar.success("Kupony przywrócone!")
             st.rerun()
         except Exception as e: st.sidebar.error(f"Błąd: {e}")
-
-# --- KONIEC SEKCJI BACKUP ---
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
@@ -561,14 +580,11 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     gen = CouponGenerator(model)
     all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
     
-    # --- DODAWANIE MECZÓW ---
     st.sidebar.markdown("---")
     st.sidebar.header("Dodaj Mecze")
     tab_manual, tab_ocr, tab_text, tab_csv = st.sidebar.tabs(["Ręczny", "📸 Zdjęcie", "📝 Wklej Tekst", "📁 CSV"])
     
     new_items = []
-    
-    # 1. RĘCZNY
     with tab_manual:
         sel_league = st.selectbox("Liga:", leagues)
         df_l = get_data_for_league(sel_league)
@@ -578,11 +594,9 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             with col_date: date_input = st.date_input("Data", datetime.today())
             with col_h: h = st.selectbox("Dom", teams)
             with col_a: a = st.selectbox("Wyjazd", teams)
-            
             if st.form_submit_button("➕ Dodaj") and h!=a: 
                 new_items.append({'Home':h, 'Away':a, 'League':sel_league, 'Date': str(date_input)})
     
-    # 2. OCR
     with tab_ocr:
         uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
         if uploaded_img and st.button("Skanuj"):
@@ -601,18 +615,15 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     else: st.error(log)
             if st.button("Wyczyść Debug"): st.session_state.last_ocr_debug = None; st.rerun()
 
-    # 3. TEXT PARSER
     with tab_text:
         st.info("💡 Skopiuj listę meczów z Flashscore (Ctrl+C) i wklej tutaj.")
         raw_text_input = st.text_area("Wklej mecze", height=150)
         if st.button("🔍 Analizuj Tekst"):
             parsed = parse_raw_text(raw_text_input, all_teams_list)
             if parsed:
-                new_items.extend(parsed)
-                st.success(f"✅ Znaleziono {len(parsed)} par!")
+                new_items.extend(parsed); st.success(f"✅ Znaleziono {len(parsed)} par!")
             else: st.error("Brak par.")
 
-    # 4. CSV
     with tab_csv:
         uploaded_fix = st.file_uploader("fixtures.csv", type=['csv'])
         if uploaded_fix and st.button("📥 Import"):
@@ -620,7 +631,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             if not err: new_items.extend(m_list); st.success(f"Import {len(m_list)}")
             else: st.error(err)
 
-    # --- PRZETWARZANIE NOWYCH MECZÓW (Z BLOKADĄ DUPLIKATÓW) ---
     if new_items:
         added_count = 0
         errors = []
@@ -628,8 +638,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             conflict_msg = check_team_conflict(item['Home'], item['Away'], st.session_state.fixture_pool)
             if conflict_msg: errors.append(conflict_msg)
             else:
-                st.session_state.fixture_pool.append(item)
-                added_count += 1
+                st.session_state.fixture_pool.append(item); added_count += 1
         save_fixture_pool(st.session_state.fixture_pool)
         if added_count > 0: st.toast(f"Dodano {added_count} meczów!")
         if errors:
@@ -637,21 +646,15 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                 for e in errors: st.warning(e)
         st.rerun()
 
-    # --- EDYTOR I GENERATOR ---
     st.subheader("📋 Terminarz")
-    
     col_clean, col_clear = st.columns(2)
     with col_clean:
         if st.button("🧹 Usuń przeterminowane mecze"):
             st.session_state.fixture_pool, removed = clean_expired_matches(st.session_state.fixture_pool)
-            save_fixture_pool(st.session_state.fixture_pool)
-            st.success(f"Usunięto {removed} starych meczów.")
-            st.rerun()
+            save_fixture_pool(st.session_state.fixture_pool); st.success(f"Usunięto {removed}."); st.rerun()
     with col_clear:
         if st.button("🗑️ Wyczyść WSZYSTKO"): 
-            st.session_state.fixture_pool = []
-            save_fixture_pool([])
-            st.rerun()
+            st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
 
     if st.session_state.fixture_pool:
         df_pool = pd.DataFrame(st.session_state.fixture_pool)
@@ -660,8 +663,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         edited_df = st.data_editor(df_pool, num_rows="dynamic", use_container_width=True, key="fixture_editor")
         formatted_records = []
         for r in edited_df.to_dict('records'):
-            if isinstance(r['Date'], (datetime, date)):
-                r['Date'] = r['Date'].strftime('%Y-%m-%d')
+            if isinstance(r['Date'], (datetime, date)): r['Date'] = r['Date'].strftime('%Y-%m-%d')
             formatted_records.append(r)
 
         if formatted_records != st.session_state.fixture_pool:
@@ -672,7 +674,13 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         st.header("🎲 Generator Kuponów")
         c1, c2, c3 = st.columns(3)
         with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
-        with c2: strat = st.selectbox("Strategia", ["Smart Mix (Zróżnicowany)", "1 (Gospodarz)", "2 (Gość)", "Over 2.5", "Under 4.5", "1. Połowa Over 1.5", "BTS Tak", "1X", "X2"])
+        with c2: strat = st.selectbox("Strategia", [
+            "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", 
+            "Podwójna Szansa (1X, X2, 12)",
+            "Gole Agresywne (BTS, O2.5)",
+            "Do Przerwy (HT O1.5)",
+            "Wszystkie Zdarzenia (Max Pewność)"
+        ])
         with c3:
             if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
             else:
@@ -683,23 +691,25 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         if st.button("🚀 GENERUJ", type="primary"):
             analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
             
-            if strat == "Smart Mix (Zróżnicowany)":
-                cat_win = sorted([x for x in analyzed_pool if x['Kategoria'] == 'WIN'], key=lambda x: x['Pewność'], reverse=True)
-                cat_goal = sorted([x for x in analyzed_pool if x['Kategoria'] == 'GOAL'], key=lambda x: x['Pewność'], reverse=True)
-                cat_safe = sorted([x for x in analyzed_pool if x['Kategoria'] == 'SAFE'], key=lambda x: x['Pewność'], reverse=True)
+            # --- LOGIKA SORTOWANIA (KARUZELA DLA MIXU) ---
+            if "Mix Bezpieczny" in strat:
+                cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
+                cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
+                cat_team = sorted([x for x in analyzed_pool if x['Kategoria'] == 'TEAM'], key=lambda x: x['Pewność'], reverse=True)
+                
                 mixed_list = []
-                max_len = max(len(cat_win), len(cat_goal), len(cat_safe))
+                max_len = max(len(cat_dc), len(cat_uo), len(cat_team))
                 for i in range(max_len):
-                    if i < len(cat_win): mixed_list.append(cat_win[i])
-                    if i < len(cat_goal): mixed_list.append(cat_goal[i])
-                    if i < len(cat_safe): mixed_list.append(cat_safe[i])
+                    if i < len(cat_dc): mixed_list.append(cat_dc[i])
+                    if i < len(cat_uo): mixed_list.append(cat_uo[i])
+                    if i < len(cat_team): mixed_list.append(cat_team[i])
                 final_pool = mixed_list
             else:
                 final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
 
             st.session_state.generated_coupons = [] 
             if gen_mode == "Jeden Pewny Kupon":
-                st.session_state.generated_coupons.append({"name": "Top Smart Mix", "data": final_pool[:coupon_len]})
+                st.session_state.generated_coupons.append({"name": f"Top {strat}", "data": final_pool[:coupon_len]})
             else: 
                 candidate_pool = final_pool[:chaos_factor]
                 if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
@@ -729,39 +739,27 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
 elif mode == "3. 📜 MOJE KUPONY":
     st.title("📜 Historia Kuponów")
-    
-    st.info("ℹ️ Aby system rozliczył kupony, wejdź w ADMIN i wgraj aktualne pliki CSV z ligami (np. E0.csv).")
-    
+    st.info("ℹ️ Aby system rozliczył kupony, wejdź w ADMIN i wgraj aktualne pliki CSV.")
     if st.button("🔄 Sprawdź Wyniki (Rozlicz Kupony)"):
         with st.spinner("Sędzia sprawdza wyniki..."):
             updated = check_results_for_coupons()
             if updated: st.success("Zaktualizowano statusy!")
             else: st.warning("Brak kuponów do sprawdzenia lub brak danych w bazie.")
-            
     coupons = load_saved_coupons()
-    
     if coupons:
-        for c in reversed(coupons): # Najnowsze na górze
+        for c in reversed(coupons):
             with st.expander(f"🎫 {c['name']} (Utworzono: {c['date_created']})", expanded=False):
                 df_c = pd.DataFrame(c['data'])
-                
-                # Kolorowanie wyników
                 def highlight_result(val):
                     color = 'white'
-                    if val == '✅': color = '#90EE90' # Light green
-                    elif val == '❌': color = '#FFB6C1' # Light pink
+                    if val == '✅': color = '#90EE90'
+                    elif val == '❌': color = '#FFB6C1'
                     return f'background-color: {color}'
-
                 st.dataframe(df_c.style.applymap(highlight_result, subset=['Result']), use_container_width=True)
-                
-                # Statystyki
                 wins = len(df_c[df_c['Result'] == '✅'])
                 losses = len(df_c[df_c['Result'] == '❌'])
                 pending = len(df_c[df_c['Result'] == '?'])
                 st.caption(f"✅ Trafione: {wins} | ❌ Pudła: {losses} | ⏳ Oczekujące: {pending}")
-                
         if st.button("🗑️ Wyczyść Historię"):
-            if os.path.exists(COUPONS_DB_FILE): os.remove(COUPONS_DB_FILE)
-            st.rerun()
-    else:
-        st.info("Nie zapisałeś jeszcze żadnych kuponów.")
+            if os.path.exists(COUPONS_DB_FILE): os.remove(COUPONS_DB_FILE); st.rerun()
+    else: st.info("Brak kuponów.")
