@@ -14,7 +14,7 @@ import json
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v17.0 H2H Kryptonite", layout="wide")
+st.set_page_config(page_title="MintStats v17.1 Adaptive AI", layout="wide")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -377,7 +377,7 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- MODEL POISSONA Z FORMĄ I H2H ---
+# --- MODEL POISSONA Z ADAPTACYJNYM ATUTEM GOSPODARZA ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
@@ -386,6 +386,8 @@ class PoissonModel:
         self.team_form = {} 
         self.league_avg_ft = 1.0
         self.league_avg_ht = 1.0
+        self.home_adv_factor = 1.15 # Domyślna
+        
         if not data.empty:
             self.data = self.data.sort_values(by='Date')
             self._calculate_strength()
@@ -395,6 +397,16 @@ class PoissonModel:
         lg_ft = self.data['FTHG'].sum() + self.data['FTAG'].sum()
         matches = len(self.data) * 2
         self.league_avg_ft = lg_ft / matches if matches > 0 else 1.0
+
+        # --- OBLICZANIE DYNAMICZNEGO ATUTU GOSPODARZA ---
+        home_goals_total = self.data['FTHG'].sum()
+        away_goals_total = self.data['FTAG'].sum()
+        
+        if away_goals_total > 0:
+            # Stosunek goli dom/wyjazd. Np. 1.25 oznacza 25% więcej goli u siebie.
+            self.home_adv_factor = home_goals_total / away_goals_total
+        else:
+            self.home_adv_factor = 1.15 # Fallback
 
         has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
         if has_ht:
@@ -445,27 +457,18 @@ class PoissonModel:
             self.team_form[team] = {'icons': form_str, 'att_boost': att_boost}
 
     def get_h2h_analysis(self, home, away):
-        # Znajdź mecze bezpośrednie
         mask = ((self.data['HomeTeam'] == home) & (self.data['AwayTeam'] == away)) | \
                ((self.data['HomeTeam'] == away) & (self.data['AwayTeam'] == home))
-        
-        # Pobierz 5 ostatnich, posortuj od najnowszego
         h2h_matches = self.data[mask].sort_values(by='Date', ascending=False).head(5)
-        
         if h2h_matches.empty: return None
-        
         home_wins = 0
         for _, row in h2h_matches.iterrows():
             if row['HomeTeam'] == home:
                 if row['FTHG'] > row['FTAG']: home_wins += 1
-            else: # home grał na wyjeździe
+            else:
                 if row['FTAG'] > row['FTHG']: home_wins += 1
-        
-        # Analiza Kryptonitu
-        # Jeśli grali minimum 3 razy i obecny gospodarz nie wygrał ani razu
         if len(h2h_matches) >= 3 and home_wins == 0:
             return "⚠️ H2H (Kryptonit!)"
-        
         return None
 
     def predict(self, home, away):
@@ -479,12 +482,14 @@ class PoissonModel:
         if home in self.team_form: h_att *= self.team_form[home]['att_boost']
         if away in self.team_form: a_att *= self.team_form[away]['att_boost']
         
-        xg_h_ft = h_att * a_def * self.league_avg_ft * 1.15
+        # Użycie dynamicznego home_adv_factor
+        xg_h_ft = h_att * a_def * self.league_avg_ft * self.home_adv_factor
         xg_a_ft = a_att * h_def * self.league_avg_ft
         
         xg_h_ht, xg_a_ht = 0.0, 0.0
         if home in self.team_stats_ht and away in self.team_stats_ht:
-            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * 1.10
+            # HT też lekko skalujemy (np. 80% siły FT)
+            xg_h_ht = self.team_stats_ht[home]['attack'] * self.team_stats_ht[away]['defense'] * self.league_avg_ht * (self.home_adv_factor * 0.9)
             xg_a_ht = self.team_stats_ht[away]['attack'] * self.team_stats_ht[home]['defense'] * self.league_avg_ht
             
         return xg_h_ft, xg_a_ft, xg_h_ht, xg_a_ht
@@ -526,25 +531,17 @@ class CouponGenerator:
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
             
-            # --- ANALIZA H2H (KRYPTONIT) ---
             h2h_warning = self.model.get_h2h_analysis(m['Home'], m['Away'])
-            
-            # Form Icons
             form_h = self.model.get_team_form_icons(m['Home'])
             form_a = self.model.get_team_form_icons(m['Away'])
             
-            # Kryzys
             warning = ""
             if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
             if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
-            
-            # Jeśli H2H mówi NIE, a matematyka stawia na 1, to dodaj ostrzeżenie
-            if h2h_warning and probs['1'] > 0.5:
-                warning += " " + h2h_warning
+            if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
 
             potential_bets = []
             
-            # 1. MIX BEZPIECZNY
             if "Mix Bezpieczny" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC'})
@@ -553,35 +550,28 @@ class CouponGenerator:
                 potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM'})
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM'})
 
-            # 2. PODWÓJNA SZANSA
             elif "Podwójna Szansa" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN'})
 
-            # 3. GOLE AGRESYWNE
             elif "Gole Agresywne" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN'})
 
-            # 4. DO PRZERWY
             elif "Do Przerwy" in strategy:
                 potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN'})
 
-            # 5. TWIERDZA
             elif "Twierdza" in strategy:
                 potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN'})
 
-            # 6. MUR OBRONNY
             elif "Mur Obronny" in strategy:
                 potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN'})
                 potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN'})
 
-            # 7. ZŁOTY ŚRODEK
             elif "Złoty Środek" in strategy:
                 potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN'})
 
-            # 8. WSZYSTKIE
             elif "Wszystkie" in strategy:
                 potential_bets = [
                     {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN'}, {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN'},
@@ -592,7 +582,6 @@ class CouponGenerator:
 
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
-                
                 combined_form = f"{form_h} vs {form_a}"
                 if warning: combined_form += f" {warning}"
                 
@@ -614,7 +603,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v17.0: H2H Kryptonite")
+st.title("☁️ MintStats v17.1: Adaptive AI")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
