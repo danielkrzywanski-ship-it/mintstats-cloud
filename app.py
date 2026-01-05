@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v20.0 League Cartographer", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="MintStats v20.1 Score Sniper", layout="wide", page_icon="⚽")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -162,7 +162,8 @@ def save_new_coupon(name, coupon_data):
         simplified_data.append({
             'Mecz': bet['Mecz'], 'Home': bet['Mecz'].split(' - ')[0], 'Away': bet['Mecz'].split(' - ')[1],
             'Typ': bet['Typ'], 'Date': bet.get('Date', 'N/A'), 'Pewność': bet['Pewność'],
-            'Result': '?', 'Forma': bet.get('Forma', ''), 'Stabilność': bet.get('Stabilność', '')
+            'Result': '?', 'Forma': bet.get('Forma', ''), 'Stabilność': bet.get('Stabilność', ''),
+            'Wynik': bet.get('Wynik', '') # Zapisz przewidywany wynik
         })
     new_entry = {
         'ID': new_id, 'Name': name, 'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
@@ -345,32 +346,25 @@ def create_radar_chart(h_stats, a_stats, h_name, a_name):
     return fig
 
 def create_league_scatter(df_league):
-    # Prosty model dla całej ligi
     model = PoissonModel(df_league)
     teams = []; att = []; defn = []
     for team, stats in model.team_stats_ft.items():
         teams.append(team); att.append(stats['att']); defn.append(stats['def'])
-    
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=att, y=defn, mode='markers+text', text=teams, textposition='top center',
         marker=dict(size=12, color='#00C896', line=dict(width=2, color='DarkSlateGrey'))
     ))
-    
-    # Linie średnie
     fig.add_vline(x=1.0, line_width=1, line_dash="dash", line_color="grey")
     fig.add_hline(y=1.0, line_width=1, line_dash="dash", line_color="grey")
-    
-    # Adnotacje ćwiartek
     fig.add_annotation(x=1.5, y=0.5, text="👑 DOMINATORZY", showarrow=False, font=dict(size=14, color="green"))
     fig.add_annotation(x=0.5, y=1.5, text="💀 DO BICIA", showarrow=False, font=dict(size=14, color="red"))
     fig.add_annotation(x=1.5, y=1.5, text="🍿 WESOŁY FUTBOL", showarrow=False, font=dict(size=12, color="orange"))
     fig.add_annotation(x=0.5, y=0.5, text="🧱 MURARZE", showarrow=False, font=dict(size=12, color="blue"))
-
     fig.update_layout(
         title="Mapa Siły Ligowej", xaxis_title="Siła Ataku (>1.0 Dobrze)", yaxis_title="Dziurawość Obrony (>1.0 Źle)",
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'),
-        yaxis=dict(autorange="reversed") # Odwracamy Y, bo w obronie mniej = lepiej (dół wykresu)
+        yaxis=dict(autorange="reversed")
     )
     return fig
 
@@ -431,7 +425,8 @@ class PoissonModel:
             if len(matches) > 0:
                 avg_scored = scored_recent / len(matches)
                 att_boost = 1.0 + (avg_scored * 0.05)
-                form_score = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
+                pts = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
+                form_score = pts
             
             self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost, 'score': form_score}
 
@@ -493,6 +488,11 @@ class PoissonModel:
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
         prob_home_0 = poisson.pmf(0, xg_h_ft); prob_away_0 = poisson.pmf(0, xg_a_ft); prob_0_0 = prob_home_0 * prob_away_0
+        
+        # --- ZNAJDOWANIE NAJBARDZIEJ PRAWDOPODOBNEGO WYNIKU ---
+        max_prob_index = np.unravel_index(mat_ft.argmax(), mat_ft.shape)
+        most_likely_score = f"{max_prob_index[0]}:{max_prob_index[1]}"
+
         return {
             "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
             "BTS_Yes": np.sum(mat_ft[1:, 1:]), "BTS_No": 1.0-np.sum(mat_ft[1:, 1:]),
@@ -503,7 +503,8 @@ class PoissonModel:
             "Under_3.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 3.5]),
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
-            "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0
+            "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0,
+            "Exact_Score": most_likely_score # Nowy parametr
         }
     
     def get_team_info(self, team):
@@ -525,7 +526,8 @@ class CouponGenerator:
             form_h, chaos_h, stats_h = self.model.get_team_info(m['Home'])
             form_a, chaos_a, stats_a = self.model.get_team_info(m['Away'])
             chaos_factor = chaos_h['factor'] * chaos_a['factor']
-            for key in probs: probs[key] *= chaos_factor
+            for key in probs: 
+                if isinstance(probs[key], float): probs[key] *= chaos_factor
             mc_stats = self.model.simulate_match_monte_carlo(xg_h, xg_a)
             warning = ""
             if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
@@ -581,11 +583,15 @@ class CouponGenerator:
                         if val > 80: mc_info = " (MC: 80%+)"
                         elif val < 50 and best['prob'] > 0.5: mc_info = " (MC: RYZYKO)"
                     else: mc_info = f" (MC: {int(val)}%)"
+                
+                # Dodaj wynik do typu
+                score_pred = f" ({probs['Exact_Score']})"
+
                 res.append({
                     'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Date': m.get('Date', 'N/A'),
-                    'Typ': best['typ'] + mc_info, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
+                    'Typ': best['typ'] + mc_info + score_pred, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
                     'Forma': combined_form, 'Stabilność': chaos_desc, 'xG': f"{xg_h:.2f}:{xg_a:.2f}",
-                    'HomeStats': stats_h, 'AwayStats': stats_a
+                    'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score']
                 })
         return res
 
@@ -595,7 +601,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v20.0: League Cartographer")
+st.title("☁️ MintStats v20.1: Score Sniper")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -721,7 +727,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                 for e in errors: st.warning(e)
         st.rerun()
 
-    # --- MAPA SIŁY (NOWOŚĆ) ---
+    # --- MAPA SIŁY ---
     with st.expander("📊 Mapa Siły Ligowej (Scatter Plot)", expanded=False):
         sel_scatter_league = st.selectbox("Wybierz Ligę do Analizy:", leagues, key="scatter_league")
         df_scatter = get_data_for_league(sel_scatter_league)
