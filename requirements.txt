@@ -6,3 +6,4 @@ matplotlib
 seaborn
 pytesseract
 Pillow
+plotly
