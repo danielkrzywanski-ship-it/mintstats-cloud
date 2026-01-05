@@ -16,7 +16,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v21.0 Truth Seeker", layout="wide", page_icon="🧪")
+st.set_page_config(page_title="MintStats v22.0 War Room", layout="wide", page_icon="🔬")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -29,12 +29,11 @@ st.markdown("""
     h1, h2, h3 { color: #008F7A !important; }
     div[data-testid="stMetricValue"] { color: #008F7A; }
     div[data-testid="stMetricLabel"] { color: #6C757D; }
-    .streamlit-expanderHeader { background-color: #FFFFFF; border-radius: 5px; }
+    .streamlit-expanderHeader { background-color: #FFFFFF; border-radius: 5px; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- SŁOWNIK ALIASÓW (Skrócony dla czytelności kodu, pełny w logice) ---
-# (W praktyce tu jest Twój pełny słownik, zachowałem go w pamięci)
+# --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
     "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "brag": "Sp Braga", "braga": "Sp Braga",
     "sc braga": "Sp Braga", "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "fc porto": "Porto",
@@ -42,9 +41,10 @@ TEAM_ALIASES = {
     "chelsea": "Chelsea", "liverpool": "Liverpool", "real madrid": "Real Madrid", "barcelona": "Barcelona",
     "bayern": "Bayern Munich", "psg": "Paris SG", "juventus": "Juventus", "inter": "Inter Milan",
     "milan": "Milan", "napoli": "Napoli", "roma": "Roma", "ajax": "Ajax", "feyenoord": "Feyenoord",
-    "benfica": "Benfica", "porto": "Porto", "celtic": "Celtic", "rangers": "Rangers"
+    "benfica": "Benfica", "porto": "Porto", "celtic": "Celtic", "rangers": "Rangers",
+    "valiadolia": "Valladolid", "betis": "Real Betis", "celta": "Celta", "monchengladbach": "M'gladbach",
+    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon"
 }
-# (Dodaj resztę swojego słownika jeśli brakuje, w poprzednich wersjach był pełny)
 
 LEAGUE_NAMES = {
     'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship',
@@ -127,7 +127,7 @@ def save_new_coupon(name, coupon_data):
             'Mecz': bet['Mecz'], 'Home': bet['Mecz'].split(' - ')[0], 'Away': bet['Mecz'].split(' - ')[1],
             'Typ': bet['Typ'], 'Date': bet.get('Date', 'N/A'), 'Pewność': bet['Pewność'],
             'Result': '?', 'Forma': bet.get('Forma', ''), 'Stabilność': bet.get('Stabilność', ''),
-            'Wynik': bet.get('Wynik', '')
+            'Wynik': bet.get('Wynik', ''), 'Verdict': bet.get('Verdict', '')
         })
     new_entry = {
         'ID': new_id, 'Name': name, 'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
@@ -169,6 +169,7 @@ def check_results_for_coupons():
 def evaluate_bet(bet_type, row):
     fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
     try:
+        bet_type = bet_type.split('(')[0].strip() # Clean MC info
         if bet_type.startswith("Win"):
             if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
@@ -293,7 +294,7 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- WYKRESY (RADAR + SCATTER) ---
+# --- WYKRESY I WIZUALIZACJE (WAR ROOM) ---
 def create_radar_chart(h_stats, a_stats, h_name, a_name):
     def norm_att(val): return min(val * 50, 100)
     def norm_def(val): return min((2.0 - val) * 50, 100)
@@ -304,8 +305,36 @@ def create_radar_chart(h_stats, a_stats, h_name, a_name):
     fig.add_trace(go.Scatterpolar(r=h_vals, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
     fig.add_trace(go.Scatterpolar(r=a_vals, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 100], showticklabels=True, tickfont=dict(color='#666')), angularaxis=dict(tickfont=dict(color='#333', size=12))),
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100], showticklabels=True), angularaxis=dict(tickfont=dict(color='#333', size=12))),
         showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'), margin=dict(l=30, r=30, t=30, b=30), height=250, legend=dict(font=dict(color='#333'))
+    )
+    return fig
+
+def create_score_heatmap(xg_h, xg_a):
+    max_g = 6
+    matrix = [[poisson.pmf(h, xg_h) * poisson.pmf(a, xg_a) for a in range(max_g)] for h in range(max_g)]
+    fig = go.Figure(data=go.Heatmap(
+        z=matrix, x=[str(i) for i in range(max_g)], y=[str(i) for i in range(max_g)],
+        colorscale='Mint', texttemplate="%{z:.1%}"
+    ))
+    fig.update_layout(
+        title="Prawdopodobieństwo Wyniku", xaxis_title="Gole Gości", yaxis_title="Gole Gospodarzy",
+        height=300, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig
+
+def create_goal_distribution(xg_h, xg_a, h_name, a_name):
+    max_g = 5
+    h_probs = [poisson.pmf(i, xg_h)*100 for i in range(max_g)]
+    a_probs = [poisson.pmf(i, xg_a)*100 for i in range(max_g)]
+    x_labels = [str(i) for i in range(max_g-1)] + ["4+"]
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name=h_name, x=x_labels, y=h_probs, marker_color='#00C896'))
+    fig.add_trace(go.Bar(name=a_name, x=x_labels, y=a_probs, marker_color='#FF4B4B'))
+    fig.update_layout(
+        title="Rozkład Goli", barmode='group', xaxis_title="Liczba Goli", yaxis_title="Szansa (%)",
+        height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
     )
     return fig
 
@@ -353,10 +382,8 @@ class PoissonModel:
         lg_ft = self.data['FTHG'].sum() + self.data['FTAG'].sum()
         matches = len(self.data) * 2
         self.league_avg_ft = lg_ft / matches if matches > 0 else 1.0
-        
         home_goals = self.data['FTHG'].sum(); away_goals = self.data['FTAG'].sum()
         if away_goals > 0: self.home_adv_factor = home_goals / away_goals
-
         has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
         if has_ht: lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum(); self.league_avg_ht = lg_ht / matches if matches > 0 else 1.0
         
@@ -389,8 +416,7 @@ class PoissonModel:
             if len(matches) > 0:
                 avg_scored = scored_recent / len(matches)
                 att_boost = 1.0 + (avg_scored * 0.05)
-                pts = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
-                form_score = pts
+                form_score = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
             
             self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost, 'score': form_score}
 
@@ -477,6 +503,23 @@ class PoissonModel:
         combined = {**stats, 'form_score': form['score'], 'chaos_score': chaos['score']}
         return form['icons'], chaos, combined
 
+    def generate_narrative(self, xg_h, xg_a, chaos_h, chaos_a, home_adv):
+        texts = []
+        # Faworyt
+        if xg_h > xg_a * 1.6: texts.append("🔥 Gospodarz jest wyraźnym faworytem (Twierdza).")
+        elif xg_a > xg_h * 1.4: texts.append("🔥 Goście dominują analitycznie.")
+        else: texts.append("⚖️ Mecz wyrównany (50/50).")
+        
+        # Gole
+        total_xg = xg_h + xg_a
+        if total_xg > 3.0: texts.append("🍿 Spodziewany grad goli (Wysokie xG).")
+        elif total_xg < 2.0: texts.append("🧱 Zapowiada się defensywne szachy (Niskie xG).")
+        
+        # Chaos
+        if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
+        
+        return " ".join(texts)
+
 class CouponGenerator:
     def __init__(self, model): self.model = model
     def analyze_pool(self, pool, strategy="Mix Bezpieczny"):
@@ -500,6 +543,10 @@ class CouponGenerator:
             if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
             if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
             if "🧊" in chaos_h['rating'] and "🧊" in chaos_a['rating']: chaos_desc = "🧊 STABLE"
+            
+            # Narrative
+            verdict = self.model.generate_narrative(xg_h, xg_a, chaos_h, chaos_a, self.model.home_adv_factor)
+
             potential_bets = []
             if "Mix Bezpieczny" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC', 'mc_key': '1'})
@@ -552,76 +599,52 @@ class CouponGenerator:
                     'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Date': m.get('Date', 'N/A'),
                     'Typ': best['typ'] + mc_info + score_pred, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
                     'Forma': combined_form, 'Stabilność': chaos_desc, 'xG': f"{xg_h:.2f}:{xg_a:.2f}",
-                    'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score']
+                    'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score'], 'Verdict': verdict
                 })
         return res
 
 # --- LABORATORIUM (BACKTEST & XPTS) ---
 def run_backtest(df, strategy, limit=50):
-    # Sortuj chronologicznie od najnowszych
     df = df.sort_values(by='Date', ascending=False).head(limit)
-    df = df.sort_values(by='Date', ascending=True) # Ale przetwarzaj po kolei
-    
-    # Tworzymy model na podstawie CAŁEJ ligi (uproszczenie dla szybkości)
-    # W idealnym backteście model powinien być liczony krocząco (rolling window),
-    # ale to zajęłoby minuty. Tutaj robimy "Fast Check".
+    df = df.sort_values(by='Date', ascending=True)
     model = PoissonModel(df) 
     gen = CouponGenerator(model)
-    
     pool = []
-    for _, row in df.iterrows():
-        pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
-    
+    for _, row in df.iterrows(): pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
     generated_tips = gen.analyze_pool(pool, strategy)
-    
     results = {'Correct': 0, 'Wrong': 0, 'Total': 0}
-    
     for tip in generated_tips:
         home, away = tip['Mecz'].split(' - ')
         match = df[(df['HomeTeam'] == home) & (df['AwayTeam'] == away)]
         if not match.empty:
             actual = match.iloc[0]
-            # Używamy evaluate_bet z głównego kodu
-            # Musimy wyczyścić typ z dodatków (MC, wynik)
             raw_type = tip['Typ'].split('(')[0].strip()
-            
-            # Prosty mapping dla złożonych typów z generatora
-            # (Tutaj uproszczona logika dla głównych typów)
             is_hit = False
-            try:
-                is_hit = evaluate_bet(raw_type, actual)
+            try: is_hit = evaluate_bet(raw_type, actual)
             except: pass
-            
             if is_hit: results['Correct'] += 1
             else: results['Wrong'] += 1
             results['Total'] += 1
-            
     return results
 
 def calculate_xpts_table(df):
     model = PoissonModel(df)
     teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
     table = {t: {'P': 0, 'xPts': 0.0} for t in teams}
-    
     for _, row in df.iterrows():
         h, a = row['HomeTeam'], row['AwayTeam']
-        # Actual Points
         if row['FTHG'] > row['FTAG']: table[h]['P'] += 3
         elif row['FTHG'] == row['FTAG']: table[h]['P'] += 1; table[a]['P'] += 1
         else: table[a]['P'] += 3
-        
-        # Expected Points (Poisson)
         xg_h, xg_a, _, _ = model.predict(h, a)
         if xg_h:
             probs = model.calculate_probs(xg_h, xg_a, 0, 0)
             table[h]['xPts'] += (probs['1']*3 + probs['X']*1)
             table[a]['xPts'] += (probs['2']*3 + probs['X']*1)
-            
     df_table = pd.DataFrame.from_dict(table, orient='index').reset_index()
     df_table.columns = ['Team', 'Pts', 'xPts']
     df_table['Diff'] = df_table['Pts'] - df_table['xPts']
-    df_table['xPts'] = df_table['xPts'].round(1)
-    df_table['Diff'] = df_table['Diff'].round(1)
+    df_table['xPts'] = df_table['xPts'].round(1); df_table['Diff'] = df_table['Diff'].round(1)
     return df_table.sort_values(by='xPts', ascending=False)
 
 # --- INIT ---
@@ -630,7 +653,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v21.0: Truth Seeker")
+st.title("☁️ MintStats v22.0: The War Room")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -844,14 +867,32 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                         k3.metric("Gwiazda Kuponu", f"{best_bet['Mecz']}", delta=best_bet['Typ'])
                         disp_cols = ['Date', 'Mecz', 'Forma', 'Stabilność', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-                        with st.expander("🔍 Analiza Szczegółowa (Wykresy)"):
+                        
+                        # --- WAR ROOM ---
+                        with st.expander("🔬 WAR ROOM (Szczegóły Meczowe)"):
                             for idx, row in df_k.iterrows():
-                                c1, c2 = st.columns([1,3])
-                                with c1: st.markdown(f"**{row['Mecz']}**"); st.caption(f"Typ: {row['Typ']} | Pewność: {row['Pewność']:.1%}")
-                                with c2:
-                                    if 'HomeStats' in row and 'AwayStats' in row:
-                                        fig = create_radar_chart(row['HomeStats'], row['AwayStats'], row['Mecz'].split(' - ')[0], row['Mecz'].split(' - ')[1])
-                                        st.plotly_chart(fig, use_container_width=True, key=f"radar_{idx}")
+                                st.markdown(f"### {row['Mecz']}")
+                                st.info(f"💡 AI Verdict: {row.get('Verdict', 'Brak danych')}")
+                                
+                                c1, c2, c3 = st.columns([1, 1, 1])
+                                h_stats = row.get('HomeStats')
+                                a_stats = row.get('AwayStats')
+                                xg = row.get('xG', "0:0").split(':')
+                                xg_h, xg_a = float(xg[0]), float(xg[1])
+
+                                if h_stats and a_stats:
+                                    with c1:
+                                        st.caption("Radar Siły")
+                                        fig_rad = create_radar_chart(h_stats, a_stats, row['Mecz'].split(' - ')[0], row['Mecz'].split(' - ')[1])
+                                        st.plotly_chart(fig_rad, use_container_width=True, key=f"rad_{idx}")
+                                    with c2:
+                                        st.caption("Heatmapa Wyników")
+                                        fig_heat = create_score_heatmap(xg_h, xg_a)
+                                        st.plotly_chart(fig_heat, use_container_width=True, key=f"heat_{idx}")
+                                    with c3:
+                                        st.caption("Rozkład Goli")
+                                        fig_bar = create_goal_distribution(xg_h, xg_a, row['Mecz'].split(' - ')[0], row['Mecz'].split(' - ')[1])
+                                        st.plotly_chart(fig_bar, use_container_width=True, key=f"bar_{idx}")
                                 st.divider()
                     else: st.warning("Brak typów.")
                     st.write("---")
@@ -902,8 +943,6 @@ elif mode == "4. 🧪 LABORATORIUM":
                     col_res1, col_res2 = st.columns(2)
                     rate = (res['Correct']/res['Total'])*100 if res['Total']>0 else 0
                     col_res1.metric("Skuteczność", f"{rate:.1f}%", f"{res['Correct']}/{res['Total']}")
-                    
-                    # Chart
                     fig_bt = go.Figure(data=[go.Bar(name='Trafione', x=['Wyniki'], y=[res['Correct']], marker_color='#00C896'),
                                              go.Bar(name='Pudła', x=['Wyniki'], y=[res['Wrong']], marker_color='#FF4B4B')])
                     st.plotly_chart(fig_bt, use_container_width=True)
@@ -917,11 +956,9 @@ elif mode == "4. 🧪 LABORATORIUM":
             if not df.empty:
                 x_table = calculate_xpts_table(df)
                 st.info("💡 Diff > 0: Drużyna ma więcej punktów niż powinna (Szczęście).\nDiff < 0: Drużyna ma mniej punktów niż powinna (Pech - warto grać na nich).")
-                
                 def highlight_diff(val):
                     color = 'transparent'
-                    if val < -3: color = '#C8E6C9' # Green (Underperforming -> Opportunity)
-                    elif val > 3: color = '#FFCDD2' # Red (Overperforming -> Trap)
+                    if val < -3: color = '#C8E6C9' 
+                    elif val > 3: color = '#FFCDD2' 
                     return f'background-color: {color}'
-                
                 st.dataframe(x_table.style.applymap(highlight_diff, subset=['Diff']).format({'xPts': '{:.1f}', 'Diff': '{:.1f}'}), use_container_width=True)
