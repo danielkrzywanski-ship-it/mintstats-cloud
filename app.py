@@ -15,53 +15,25 @@ import plotly.graph_objects as go
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v19.1 Clean Light", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="MintStats v20.0 League Cartographer", layout="wide", page_icon="⚽")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
 # --- CUSTOM CSS (CLEAN LIGHT UI) ---
 st.markdown("""
     <style>
-    /* Główny styl - Jasny */
-    .stApp {
-        background-color: #F8F9FA;
-        color: #212529;
-    }
-    /* Przyciski */
-    .stButton>button {
-        background-color: #00C896;
-        color: white;
-        border-radius: 8px;
-        border: none;
-        font-weight: bold;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    .stButton>button:hover {
-        background-color: #00A87E;
-        color: white;
-    }
-    /* Nagłówki - Ciemniejsza Mięta dla kontrastu */
-    h1, h2, h3 {
-        color: #008F7A !important;
-    }
-    /* Karty statystyk */
-    div[data-testid="stMetricValue"] {
-        color: #008F7A;
-    }
-    div[data-testid="stMetricLabel"] {
-        color: #6C757D;
-    }
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: #FFFFFF;
-        border-radius: 5px;
-    }
+    .stApp { background-color: #F8F9FA; color: #212529; }
+    .stButton>button { background-color: #00C896; color: white; border-radius: 8px; border: none; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .stButton>button:hover { background-color: #00A87E; color: white; }
+    h1, h2, h3 { color: #008F7A !important; }
+    div[data-testid="stMetricValue"] { color: #008F7A; }
+    div[data-testid="stMetricLabel"] { color: #6C757D; }
+    .streamlit-expanderHeader { background-color: #FFFFFF; border-radius: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- SŁOWNIK ALIASÓW ---
 TEAM_ALIASES = {
-    # --- PORTUGALIA ---
     "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "a v s": "AFS", "b ars": "AFS",
     "brag": "Sp Braga", "braga": "Sp Braga", "sc braga": "Sp Braga", "sp braga": "Sp Braga", "w braga": "Sp Braga",
     "bars": "Boavista", "boavista": "Boavista", "w tondela": "Tondela",
@@ -72,10 +44,7 @@ TEAM_ALIASES = {
     "estoril": "Estoril", "casa pia": "Casa Pia", "gil vicente": "Gil Vicente",
     "farense": "Farense", "famalicao": "Famalicao", "arouca": "Arouca", "moreirense": "Moreirense",
     "estrela": "Estrela", "benfica": "Benfica", "santa clara": "Santa Clara", "nacional": "Nacional",
-    
-    # --- ANGLIA ---
-    "manchester uta": "Man United", "man uta": "Man United",
-    "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
+    "manchester uta": "Man United", "man uta": "Man United", "man utd": "Man United", "manchester utd": "Man United", "man united": "Man United",
     "hull": "Hull", "hull city": "Hull", "uit": "Hull", "tui": "Hull",
     "watford": "Watford", "watford fc": "Watford", "wottora": "Watford", "wottore": "Watford",
     "qpr": "QPR", "queens park rangers": "QPR", "opr": "QPR",
@@ -83,59 +52,33 @@ TEAM_ALIASES = {
     "blackburn": "Blackburn", "blackburn rovers": "Blackburn", "q blockouen": "Blackburn",
     "preston": "Preston", "preston north end": "Preston",
     "coventry": "Coventry", "coventry city": "Coventry", 
-    "stoke": "Stoke", "stoke city": "Stoke",
-    "swansea": "Swansea", "swansea city": "Swansea", 
-    "cardiff": "Cardiff", "cardiff city": "Cardiff",
-    "norwich": "Norwich", "norwich city": "Norwich", 
-    "luton": "Luton", "luton town": "Luton",
-    "derby": "Derby", "derby county": "Derby", 
+    "stoke": "Stoke", "stoke city": "Stoke", "swansea": "Swansea", "swansea city": "Swansea", 
+    "cardiff": "Cardiff", "cardiff city": "Cardiff", "norwich": "Norwich", "norwich city": "Norwich", 
+    "luton": "Luton", "luton town": "Luton", "derby": "Derby", "derby county": "Derby", 
     "oxford": "Oxford", "oxford united": "Oxford",
-    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds", 
-    "shetticia wea": "Sheffield Weds", "sheila wea": "Sheffield Weds",
+    "sheffield wed": "Sheffield Weds", "sheffield wednesday": "Sheffield Weds", "shetticia wea": "Sheffield Weds", "sheila wea": "Sheffield Weds",
     "plymouth": "Plymouth", "plymouth argyle": "Plymouth", 
-    "portsmouth": "Portsmouth",
-    "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest", "nottingham": "Nott'm Forest",
+    "portsmouth": "Portsmouth", "nottm forest": "Nott'm Forest", "nottingham forest": "Nott'm Forest", "nottingham": "Nott'm Forest",
     "wolves": "Wolverhampton", "wolverhampton": "Wolverhampton",
-    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", 
-    "shettiots urs": "Sheffield United", "shottiois urs": "Sheffield United", "shettiois urd": "Sheffield United",
-    "leeds": "Leeds", "leeds utd": "Leeds", 
-    "manchester city": "Man City", "man city": "Man City",
-    "wrexham": "Wrexham",
-    "br newer": "Ipswich", "ipswich": "Ipswich",
-    "mitlwatt": "Millwall", "millwall": "Millwall",
-
-    # --- HISZPANIA ---
+    "sheff utd": "Sheffield United", "sheffield united": "Sheffield United", "shettiots urs": "Sheffield United", "shottiois urs": "Sheffield United", "shettiois urd": "Sheffield United",
+    "leeds": "Leeds", "leeds utd": "Leeds", "manchester city": "Man City", "man city": "Man City",
+    "wrexham": "Wrexham", "br newer": "Ipswich", "ipswich": "Ipswich", "mitlwatt": "Millwall", "millwall": "Millwall",
     "valiadolia": "Valladolid", "valladolid": "Valladolid", 
-    "burgos cr": "Burgos", "burgos": "Burgos",
-    "castetion": "Castellon", "castellon": "Castellon", 
-    "racing santander": "Santander", "r santander": "Santander",
-    "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
+    "burgos cr": "Burgos", "burgos": "Burgos", "castetion": "Castellon", "castellon": "Castellon", 
+    "racing santander": "Santander", "r santander": "Santander", "cultural leonesa": "Cultural Leonesa", "leonesa": "Cultural Leonesa",
     "real sociedad b": "Sociedad B", "sociedad b": "Sociedad B", "b real sociedad 8": "Sociedad B",
     "almeria": "Almeria", "granada": "Granada", "huesca": "Huesca", "cordoba": "Cordoba",
     "athletic bilbao": "Ath Bilbao", "atl madrid": "Ath Madrid", "atletico madrid": "Ath Madrid",
-    "betis": "Real Betis", "real betis": "Real Betis", 
-    "celta vigo": "Celta", "celta": "Celta",
-    "cout": "Ceuta", "ceuta": "Ceuta",
-    "f zoragozo": "Zaragoza", "zaragoza": "Zaragoza", "real zaragoza": "Zaragoza",
-    
-    # --- WŁOCHY ---
+    "betis": "Real Betis", "real betis": "Real Betis", "celta vigo": "Celta", "celta": "Celta",
+    "cout": "Ceuta", "ceuta": "Ceuta", "f zoragozo": "Zaragoza", "zaragoza": "Zaragoza", "real zaragoza": "Zaragoza",
     "como": "Como", "udinese": "Udinese", "g genoa": "Genoa", "genoa": "Genoa",
-    "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", 
-    "b parma": "Parma", "parma": "Parma",
-    "y suventus": "Juventus", "juventus": "Juventus", 
-    "lecce": "Lecce", "atalanta": "Atalanta",
-    "as roma": "Roma", "roma": "Roma", 
-    "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
-    
-    # --- NIEMCY ---
+    "piso": "Pisa", "pisa": "Pisa", "sassuolo": "Sassuolo", "b parma": "Parma", "parma": "Parma",
+    "y suventus": "Juventus", "juventus": "Juventus", "lecce": "Lecce", "atalanta": "Atalanta",
+    "as roma": "Roma", "roma": "Roma", "inter": "Inter Milan", "inter milan": "Inter Milan", "ac milan": "Milan",
     "monchengladbach": "M'gladbach", "b monchengladbach": "M'gladbach",
     "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "eintracht frankfurt": "Ein Frankfurt",
-
-    # --- FRANCJA ---
-    "parc": "Pau FC", "pau": "Pau FC", "pau fc": "Pau FC",
-    "parisre": "Paris FC", "paris fc": "Paris FC",
-    "b tyon": "Lyon", "lyon": "Lyon", "olympique lyon": "Lyon",
-    "thy morsylia": "Marseille", "marsylia": "Marseille", "marseille": "Marseille",
+    "parc": "Pau FC", "pau": "Pau FC", "pau fc": "Pau FC", "parisre": "Paris FC", "paris fc": "Paris FC",
+    "b tyon": "Lyon", "lyon": "Lyon", "olympique lyon": "Lyon", "thy morsylia": "Marseille", "marsylia": "Marseille", "marseille": "Marseille",
     "psc": "Paris SG", "psg": "Paris SG", "paris saint germain": "Paris SG"
 }
 
@@ -166,18 +109,18 @@ def get_leagues_list():
         return df['LeagueName'].tolist()
     except: return []
 
-def get_data_for_league(league_name):
-    try:
-        conn = sqlite3.connect("mintstats.db")
-        df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
-        conn.close()
-        return df
-    except: return pd.DataFrame()
-
 def get_all_data():
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT * FROM all_leagues", conn)
+        conn.close()
+        return df
+    except: return pd.DataFrame()
+
+def get_data_for_league(league_name):
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
         conn.close()
         return df
     except: return pd.DataFrame()
@@ -203,10 +146,8 @@ def load_saved_coupons():
                     data_json = row['Data'].replace("'", '"')
                     coupon_data = json.loads(data_json)
                     coupons.append({
-                        'id': row['ID'],
-                        'name': row['Name'],
-                        'date_created': row['DateCreated'],
-                        'data': coupon_data
+                        'id': row['ID'], 'name': row['Name'],
+                        'date_created': row['DateCreated'], 'data': coupon_data
                     })
                 except: continue
             return coupons
@@ -219,27 +160,17 @@ def save_new_coupon(name, coupon_data):
     simplified_data = []
     for bet in coupon_data:
         simplified_data.append({
-            'Mecz': bet['Mecz'],
-            'Home': bet['Mecz'].split(' - ')[0],
-            'Away': bet['Mecz'].split(' - ')[1],
-            'Typ': bet['Typ'],
-            'Date': bet.get('Date', 'N/A'),
-            'Pewność': bet['Pewność'],
-            'Result': '?',
-            'Forma': bet.get('Forma', ''),
-            'Stabilność': bet.get('Stabilność', '')
+            'Mecz': bet['Mecz'], 'Home': bet['Mecz'].split(' - ')[0], 'Away': bet['Mecz'].split(' - ')[1],
+            'Typ': bet['Typ'], 'Date': bet.get('Date', 'N/A'), 'Pewność': bet['Pewność'],
+            'Result': '?', 'Forma': bet.get('Forma', ''), 'Stabilność': bet.get('Stabilność', '')
         })
     new_entry = {
-        'ID': new_id,
-        'Name': name,
-        'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'ID': new_id, 'Name': name, 'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'Data': json.dumps(simplified_data)
     }
     df_new = pd.DataFrame([new_entry])
-    if os.path.exists(COUPONS_DB_FILE):
-        df_new.to_csv(COUPONS_DB_FILE, mode='a', header=False, index=False)
-    else:
-        df_new.to_csv(COUPONS_DB_FILE, index=False)
+    if os.path.exists(COUPONS_DB_FILE): df_new.to_csv(COUPONS_DB_FILE, mode='a', header=False, index=False)
+    else: df_new.to_csv(COUPONS_DB_FILE, index=False)
 
 def check_results_for_coupons():
     coupons = load_saved_coupons()
@@ -253,9 +184,7 @@ def check_results_for_coupons():
         processed_bets = []
         for bet in bets:
             status = bet.get('Result', '?')
-            if status in ['✅', '❌']:
-                processed_bets.append(bet)
-                continue
+            if status in ['✅', '❌']: processed_bets.append(bet); continue
             h, a = bet['Home'], bet['Away']
             match = df_history[(df_history['HomeTeam'] == h) & (df_history['AwayTeam'] == a)]
             if not match.empty:
@@ -273,8 +202,7 @@ def check_results_for_coupons():
     return updated_coupons
 
 def evaluate_bet(bet_type, row):
-    fthg, ftag = row['FTHG'], row['FTAG']
-    goals = fthg + ftag
+    fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
     try:
         if bet_type.startswith("Win"):
             if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
@@ -300,17 +228,13 @@ def evaluate_bet(bet_type, row):
 
 def check_team_conflict(home, away, pool):
     for m in pool:
-        if m['Home'] == home and m['Away'] == away:
-            return f"⛔ Mecz {home} vs {away} jest już na liście!"
+        if m['Home'] == home and m['Away'] == away: return f"⛔ Mecz {home} vs {away} jest już na liście!"
     return None
 
 def clean_expired_matches(pool):
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    new_pool = []
-    removed = 0
+    today_str = datetime.today().strftime('%Y-%m-%d'); new_pool = []; removed = 0
     for m in pool:
-        if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan':
-            new_pool.append(m); continue
+        if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan': new_pool.append(m); continue
         try:
             if str(m['Date']) >= today_str: new_pool.append(m)
             else: removed += 1
@@ -339,13 +263,11 @@ def process_uploaded_history(files):
         master = pd.concat(all_data, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
         master.to_sql('all_leagues', conn, if_exists='replace', index=False)
-        conn.close()
-        return len(master)
+        conn.close(); return len(master)
     return 0
 
 def clean_ocr_text_debug(text):
-    lines = text.split('\n')
-    cleaned = []
+    lines = text.split('\n'); cleaned = []
     for line in lines:
         normalized = re.sub(r'[^a-zA-Z0-9 ]', ' ', line).strip()
         normalized = re.sub(r'\s+', ' ', normalized)
@@ -354,9 +276,7 @@ def clean_ocr_text_debug(text):
     return cleaned
 
 def extract_text_from_image(uploaded_file):
-    try: 
-        image = Image.open(uploaded_file)
-        return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
+    try: image = Image.open(uploaded_file); return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
     except Exception as e: return f"Error OCR: {e}"
 
 def resolve_team_name(raw_name, available_teams):
@@ -371,9 +291,7 @@ def resolve_team_name(raw_name, available_teams):
     return None
 
 def parse_raw_text(text_input, available_teams):
-    lines = text_input.split('\n')
-    found_matches = []
-    today_str = datetime.today().strftime('%Y-%m-%d')
+    lines = text_input.split('\n'); found_matches = []; today_str = datetime.today().strftime('%Y-%m-%d')
     for line in lines:
         line = line.strip()
         if not line: continue
@@ -382,28 +300,20 @@ def parse_raw_text(text_input, available_teams):
         if " - " in line: parts = line.split(" - ")
         elif " vs " in line: parts = line.split(" vs ")
         if len(parts) >= 2:
-            raw_home = parts[0]
-            raw_away_chunk = parts[1]
-            raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
-            home_team = resolve_team_name(raw_home, available_teams)
-            away_team = resolve_team_name(raw_away, available_teams)
+            raw_home = parts[0]; raw_away_chunk = parts[1]; raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
+            home_team = resolve_team_name(raw_home, available_teams); away_team = resolve_team_name(raw_away, available_teams)
             if home_team and away_team and home_team != away_team:
                 found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': today_str})
     return found_matches
 
 def smart_parse_matches_v3(text_input, available_teams):
-    cleaned_lines = clean_ocr_text_debug(text_input)
-    found_teams = []
-    debug_log = []
-    today_str = datetime.today().strftime('%Y-%m-%d')
+    cleaned_lines = clean_ocr_text_debug(text_input); found_teams = []; debug_log = []; today_str = datetime.today().strftime('%Y-%m-%d')
     for line in cleaned_lines:
-        cur = line.lower().strip()
-        matched = resolve_team_name(cur, available_teams)
+        cur = line.lower().strip(); matched = resolve_team_name(cur, available_teams)
         if matched:
             if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
             debug_log.append(f"✅ '{cur}' -> '{matched}'")
-        else:
-            debug_log.append(f"❌ '{cur}'")
+        else: debug_log.append(f"❌ '{cur}'")
     matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': today_str} for i in range(0, len(found_teams) - 1, 2)]
     return matches, debug_log, cleaned_lines
 
@@ -411,43 +321,56 @@ def parse_fixtures_csv(file):
     try:
         df = pd.read_csv(file)
         if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
-        if 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
-        else:
-            df['Date'] = datetime.today().strftime('%Y-%m-%d')
+        if 'Date' in df.columns: df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+        else: df['Date'] = datetime.today().strftime('%Y-%m-%d')
         matches = []
-        for _, row in df.iterrows():
-            matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
+        for _, row in df.iterrows(): matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- WYKRES RADAROWY ---
+# --- WYKRESY (RADAR + SCATTER) ---
 def create_radar_chart(h_stats, a_stats, h_name, a_name):
-    # Normalizacja statystyk do skali 0-100
     def norm_att(val): return min(val * 50, 100)
     def norm_def(val): return min((2.0 - val) * 50, 100)
-    
     categories = ['Atak', 'Obrona (Szczelność)', 'Forma', 'Stabilność']
-    
     h_vals = [norm_att(h_stats['att']), norm_def(h_stats['def']), h_stats.get('form_score', 50), h_stats.get('chaos_score', 50)]
     a_vals = [norm_att(a_stats['att']), norm_def(a_stats['def']), a_stats.get('form_score', 50), a_stats.get('chaos_score', 50)]
-    
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=h_vals, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
     fig.add_trace(go.Scatterpolar(r=a_vals, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
-    
     fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], showticklabels=True, tickfont=dict(color='#666')),
-            angularaxis=dict(tickfont=dict(color='#333', size=12))
-        ),
-        showlegend=True,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#333'), # Ciemny tekst na jasnym tle
-        margin=dict(l=30, r=30, t=30, b=30),
-        height=250,
-        legend=dict(font=dict(color='#333'))
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100], showticklabels=True, tickfont=dict(color='#666')), angularaxis=dict(tickfont=dict(color='#333', size=12))),
+        showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'), margin=dict(l=30, r=30, t=30, b=30), height=250, legend=dict(font=dict(color='#333'))
+    )
+    return fig
+
+def create_league_scatter(df_league):
+    # Prosty model dla całej ligi
+    model = PoissonModel(df_league)
+    teams = []; att = []; defn = []
+    for team, stats in model.team_stats_ft.items():
+        teams.append(team); att.append(stats['att']); defn.append(stats['def'])
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=att, y=defn, mode='markers+text', text=teams, textposition='top center',
+        marker=dict(size=12, color='#00C896', line=dict(width=2, color='DarkSlateGrey'))
+    ))
+    
+    # Linie średnie
+    fig.add_vline(x=1.0, line_width=1, line_dash="dash", line_color="grey")
+    fig.add_hline(y=1.0, line_width=1, line_dash="dash", line_color="grey")
+    
+    # Adnotacje ćwiartek
+    fig.add_annotation(x=1.5, y=0.5, text="👑 DOMINATORZY", showarrow=False, font=dict(size=14, color="green"))
+    fig.add_annotation(x=0.5, y=1.5, text="💀 DO BICIA", showarrow=False, font=dict(size=14, color="red"))
+    fig.add_annotation(x=1.5, y=1.5, text="🍿 WESOŁY FUTBOL", showarrow=False, font=dict(size=12, color="orange"))
+    fig.add_annotation(x=0.5, y=0.5, text="🧱 MURARZE", showarrow=False, font=dict(size=12, color="blue"))
+
+    fig.update_layout(
+        title="Mapa Siły Ligowej", xaxis_title="Siła Ataku (>1.0 Dobrze)", yaxis_title="Dziurawość Obrony (>1.0 Źle)",
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'),
+        yaxis=dict(autorange="reversed") # Odwracamy Y, bo w obronie mniej = lepiej (dół wykresu)
     )
     return fig
 
@@ -494,8 +417,7 @@ class PoissonModel:
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
         for team in teams:
             matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)].tail(5)
-            form_icons = []
-            scored_recent = 0
+            form_icons = []; scored_recent = 0
             for _, row in matches.iterrows():
                 is_home = row['HomeTeam'] == team
                 gf = row['FTHG'] if is_home else row['FTAG']
@@ -505,13 +427,11 @@ class PoissonModel:
                 elif gf == ga: form_icons.append("🤝")
                 else: form_icons.append("🔴")
             
-            att_boost = 1.0
-            form_score = 50
+            att_boost = 1.0; form_score = 50
             if len(matches) > 0:
                 avg_scored = scored_recent / len(matches)
                 att_boost = 1.0 + (avg_scored * 0.05)
-                pts = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
-                form_score = pts
+                form_score = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
             
             self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost, 'score': form_score}
 
@@ -528,28 +448,23 @@ class PoissonModel:
                 chaos_penalty = 0.9 if std_dev > 1.4 else (1.05 if std_dev < 0.9 else 1.0)
                 chaos_score = max(0, min(100, 100 - (std_dev * 30)))
                 self.team_chaos[team] = {'rating': chaos_rating, 'factor': chaos_penalty, 'score': chaos_score}
-            else:
-                self.team_chaos[team] = {'rating': "-", 'factor': 1.0, 'score': 50}
+            else: self.team_chaos[team] = {'rating': "-", 'factor': 1.0, 'score': 50}
 
     def get_h2h_analysis(self, home, away):
-        mask = ((self.data['HomeTeam'] == home) & (self.data['AwayTeam'] == away)) | \
-               ((self.data['HomeTeam'] == away) & (self.data['AwayTeam'] == home))
+        mask = ((self.data['HomeTeam'] == home) & (self.data['AwayTeam'] == away)) | ((self.data['HomeTeam'] == away) & (self.data['AwayTeam'] == home))
         h2h_matches = self.data[mask].sort_values(by='Date', ascending=False).head(5)
         if h2h_matches.empty: return None
         home_wins = 0
         for _, row in h2h_matches.iterrows():
-            if (row['HomeTeam'] == home and row['FTHG'] > row['FTAG']) or (row['AwayTeam'] == home and row['FTAG'] > row['FTHG']):
-                home_wins += 1
+            if (row['HomeTeam'] == home and row['FTHG'] > row['FTAG']) or (row['AwayTeam'] == home and row['FTAG'] > row['FTHG']): home_wins += 1
         if len(h2h_matches) >= 3 and home_wins == 0: return "⚠️ H2H (Kryptonit!)"
         return None
 
     def simulate_match_monte_carlo(self, xg_h, xg_a, n=1000):
         home_wins, draws, away_wins, over_2_5, over_1_5, bts_yes = 0,0,0,0,0,0
         for _ in range(n):
-            adj_h = xg_h * np.random.uniform(0.8, 1.2)
-            adj_a = xg_a * np.random.uniform(0.8, 1.2)
-            sim_h = np.random.poisson(adj_h)
-            sim_a = np.random.poisson(adj_a)
+            adj_h = xg_h * np.random.uniform(0.8, 1.2); adj_a = xg_a * np.random.uniform(0.8, 1.2)
+            sim_h = np.random.poisson(adj_h); sim_a = np.random.poisson(adj_a)
             if sim_h > sim_a: home_wins += 1
             elif sim_h == sim_a: draws += 1
             else: away_wins += 1
@@ -576,16 +491,10 @@ class PoissonModel:
         max_goals = 8
         mat_ft = np.array([[poisson.pmf(i, xg_h_ft) * poisson.pmf(j, xg_a_ft) for j in range(max_goals)] for i in range(max_goals)])
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
-        
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
-        
-        prob_home_0 = poisson.pmf(0, xg_h_ft)
-        prob_away_0 = poisson.pmf(0, xg_a_ft)
-        prob_0_0 = prob_home_0 * prob_away_0
-
+        prob_home_0 = poisson.pmf(0, xg_h_ft); prob_away_0 = poisson.pmf(0, xg_a_ft); prob_0_0 = prob_home_0 * prob_away_0
         return {
-            "1": prob_1, "X": prob_x, "2": prob_2, 
-            "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
+            "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
             "BTS_Yes": np.sum(mat_ft[1:, 1:]), "BTS_No": 1.0-np.sum(mat_ft[1:, 1:]),
             "Over_1.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Over_2.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 2.5]),
@@ -612,27 +521,21 @@ class CouponGenerator:
             xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
             if xg_h is None: continue
             probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
-            
             h2h_warning = self.model.get_h2h_analysis(m['Home'], m['Away'])
             form_h, chaos_h, stats_h = self.model.get_team_info(m['Home'])
             form_a, chaos_a, stats_a = self.model.get_team_info(m['Away'])
-            
             chaos_factor = chaos_h['factor'] * chaos_a['factor']
             for key in probs: probs[key] *= chaos_factor
             mc_stats = self.model.simulate_match_monte_carlo(xg_h, xg_a)
-            
             warning = ""
             if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
             if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
             if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
-
             chaos_desc = ""
             if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
             if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
             if "🧊" in chaos_h['rating'] and "🧊" in chaos_a['rating']: chaos_desc = "🧊 STABLE"
-
             potential_bets = []
-            
             if "Mix Bezpieczny" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC', 'mc_key': '1'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC', 'mc_key': '2'})
@@ -640,29 +543,22 @@ class CouponGenerator:
                 potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O', 'mc_key': None})
                 potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM', 'mc_key': None})
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM', 'mc_key': None})
-
             elif "Podwójna Szansa" in strategy:
                 potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'})
                 potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'})
                 potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN', 'mc_key': None})
-
             elif "Gole Agresywne" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
                 potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'})
-
             elif "Do Przerwy" in strategy:
                 potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN', 'mc_key': None})
-
             elif "Twierdza" in strategy:
                 potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'})
-
             elif "Mur Obronny" in strategy:
                 potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN', 'mc_key': None})
                 potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
-
             elif "Złoty Środek" in strategy:
                 potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
-
             elif "Wszystkie" in strategy:
                 potential_bets = [
                     {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
@@ -673,12 +569,10 @@ class CouponGenerator:
                     {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
                     {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
                 ]
-
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
                 combined_form = f"{form_h} vs {form_a}"
                 if warning: combined_form += f" {warning}"
-                
                 mc_info = ""
                 key = best.get('mc_key')
                 if key and key in mc_stats:
@@ -687,17 +581,10 @@ class CouponGenerator:
                         if val > 80: mc_info = " (MC: 80%+)"
                         elif val < 50 and best['prob'] > 0.5: mc_info = " (MC: RYZYKO)"
                     else: mc_info = f" (MC: {int(val)}%)"
-
                 res.append({
-                    'Mecz': f"{m['Home']} - {m['Away']}", 
-                    'Liga': m.get('League', 'N/A'), 
-                    'Date': m.get('Date', 'N/A'),
-                    'Typ': best['typ'] + mc_info, 
-                    'Pewność': best['prob'], 
-                    'Kategoria': best.get('cat', 'MAIN'),
-                    'Forma': combined_form,
-                    'Stabilność': chaos_desc,
-                    'xG': f"{xg_h:.2f}:{xg_a:.2f}",
+                    'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Date': m.get('Date', 'N/A'),
+                    'Typ': best['typ'] + mc_info, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
+                    'Forma': combined_form, 'Stabilność': chaos_desc, 'xG': f"{xg_h:.2f}:{xg_a:.2f}",
                     'HomeStats': stats_h, 'AwayStats': stats_a
                 })
         return res
@@ -708,7 +595,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v19.1: Clean Light")
+st.title("☁️ MintStats v20.0: League Cartographer")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -786,8 +673,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             with col_date: date_input = st.date_input("Data", datetime.today())
             with col_h: h = st.selectbox("Dom", teams)
             with col_a: a = st.selectbox("Wyjazd", teams)
-            if st.form_submit_button("➕ Dodaj") and h!=a: 
-                new_items.append({'Home':h, 'Away':a, 'League':sel_league, 'Date': str(date_input)})
+            if st.form_submit_button("➕ Dodaj") and h!=a: new_items.append({'Home':h, 'Away':a, 'League':sel_league, 'Date': str(date_input)})
     
     with tab_ocr:
         uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
@@ -812,8 +698,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         raw_text_input = st.text_area("Wklej mecze", height=150)
         if st.button("🔍 Analizuj Tekst"):
             parsed = parse_raw_text(raw_text_input, all_teams_list)
-            if parsed:
-                new_items.extend(parsed); st.success(f"✅ Znaleziono {len(parsed)} par!")
+            if parsed: new_items.extend(parsed); st.success(f"✅ Znaleziono {len(parsed)} par!")
             else: st.error("Brak par.")
 
     with tab_csv:
@@ -824,19 +709,26 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             else: st.error(err)
 
     if new_items:
-        added_count = 0
-        errors = []
+        added_count = 0; errors = []
         for item in new_items:
             conflict_msg = check_team_conflict(item['Home'], item['Away'], st.session_state.fixture_pool)
             if conflict_msg: errors.append(conflict_msg)
-            else:
-                st.session_state.fixture_pool.append(item); added_count += 1
+            else: st.session_state.fixture_pool.append(item); added_count += 1
         save_fixture_pool(st.session_state.fixture_pool)
         if added_count > 0: st.toast(f"Dodano {added_count} meczów!")
         if errors:
             with st.expander("⚠️ Pominięto (Duplikaty)", expanded=True):
                 for e in errors: st.warning(e)
         st.rerun()
+
+    # --- MAPA SIŁY (NOWOŚĆ) ---
+    with st.expander("📊 Mapa Siły Ligowej (Scatter Plot)", expanded=False):
+        sel_scatter_league = st.selectbox("Wybierz Ligę do Analizy:", leagues, key="scatter_league")
+        df_scatter = get_data_for_league(sel_scatter_league)
+        if not df_scatter.empty:
+            fig_scatter = create_league_scatter(df_scatter)
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else: st.warning("Brak danych dla tej ligi.")
 
     st.subheader("📋 Terminarz")
     col_clean, col_clear = st.columns(2)
@@ -866,16 +758,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         st.header("🎲 Generator Kuponów")
         c1, c2, c3 = st.columns(3)
         with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
-        with c2: strat = st.selectbox("Strategia", [
-            "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", 
-            "Podwójna Szansa (1X, X2, 12)",
-            "Gole Agresywne (BTS, O2.5)",
-            "Do Przerwy (HT O1.5)",
-            "Twierdza (Home Win)",
-            "Mur Obronny (Under 2.5/3.5)",
-            "Złoty Środek (Over 1.5)",
-            "Wszystkie Zdarzenia (Max Pewność)"
-        ])
+        with c2: strat = st.selectbox("Strategia", ["Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", "Podwójna Szansa (1X, X2, 12)", "Gole Agresywne (BTS, O2.5)", "Do Przerwy (HT O1.5)", "Twierdza (Home Win)", "Mur Obronny (Under 2.5/3.5)", "Złoty Środek (Over 1.5)", "Wszystkie Zdarzenia (Max Pewność)"])
         with c3:
             if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
             else:
@@ -885,8 +768,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
         if st.button("🚀 GENERUJ", type="primary"):
             analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
-            
-            # --- LOGIKA SORTOWANIA (KARUZELA) ---
             if "Mix Bezpieczny" in strat:
                 cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
                 cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
@@ -898,8 +779,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                     if i < len(cat_uo): mixed_list.append(cat_uo[i])
                     if i < len(cat_team): mixed_list.append(cat_team[i])
                 final_pool = mixed_list
-            else:
-                final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+            else: final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
 
             st.session_state.generated_coupons = [] 
             if gen_mode == "Jeden Pewny Kupon":
@@ -915,14 +795,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         if st.session_state.generated_coupons:
             st.write("---")
             if st.button("💾 Zapisz Wygenerowane Kupony"):
-                for kupon in st.session_state.generated_coupons:
-                    save_new_coupon(kupon['name'], kupon['data'])
+                for kupon in st.session_state.generated_coupons: save_new_coupon(kupon['name'], kupon['data'])
                 st.success("Zapisano w Historii!")
             
             for kupon in st.session_state.generated_coupons:
                 with st.container():
                     st.subheader(f"🎫 {kupon['name']}")
-                    
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
                         k1, k2, k3 = st.columns(3)
@@ -930,16 +808,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                         k2.metric("Liczba Zdarzeń", len(df_k))
                         best_bet = df_k.iloc[0]
                         k3.metric("Gwiazda Kuponu", f"{best_bet['Mecz']}", delta=best_bet['Typ'])
-                        
                         disp_cols = ['Date', 'Mecz', 'Forma', 'Stabilność', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-                        
                         with st.expander("🔍 Analiza Szczegółowa (Wykresy)"):
                             for idx, row in df_k.iterrows():
                                 c1, c2 = st.columns([1,3])
-                                with c1:
-                                    st.markdown(f"**{row['Mecz']}**")
-                                    st.caption(f"Typ: {row['Typ']} | Pewność: {row['Pewność']:.1%}")
+                                with c1: st.markdown(f"**{row['Mecz']}**"); st.caption(f"Typ: {row['Typ']} | Pewność: {row['Pewność']:.1%}")
                                 with c2:
                                     if 'HomeStats' in row and 'AwayStats' in row:
                                         fig = create_radar_chart(row['HomeStats'], row['AwayStats'], row['Mecz'].split(' - ')[0], row['Mecz'].split(' - ')[1])
@@ -968,9 +842,7 @@ elif mode == "3. 📜 MOJE KUPONY":
                     elif val == '❌': color = '#FFCDD2' # Light Red
                     return f'background-color: {color}'
                 st.dataframe(df_c.style.applymap(highlight_result, subset=['Result']), use_container_width=True)
-                wins = len(df_c[df_c['Result'] == '✅'])
-                losses = len(df_c[df_c['Result'] == '❌'])
-                pending = len(df_c[df_c['Result'] == '?'])
+                wins = len(df_c[df_c['Result'] == '✅']); losses = len(df_c[df_c['Result'] == '❌']); pending = len(df_c[df_c['Result'] == '?'])
                 st.caption(f"✅ Trafione: {wins} | ❌ Pudła: {losses} | ⏳ Oczekujące: {pending}")
         if st.button("🗑️ Wyczyść Historię"):
             if os.path.exists(COUPONS_DB_FILE): os.remove(COUPONS_DB_FILE); st.rerun()
