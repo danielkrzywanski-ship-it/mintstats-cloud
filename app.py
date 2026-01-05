@@ -11,21 +11,21 @@ import re
 import io
 import os
 import json
-import plotly.graph_objects as go # Nowa biblioteka do wykresów
+import plotly.graph_objects as go
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v19.0 Visual", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="MintStats v19.1 Clean Light", layout="wide", page_icon="⚽")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
-# --- CUSTOM CSS (MINT UI) ---
+# --- CUSTOM CSS (CLEAN LIGHT UI) ---
 st.markdown("""
     <style>
-    /* Główny styl */
+    /* Główny styl - Jasny */
     .stApp {
-        background-color: #0E1117;
-        color: #FAFAFA;
+        background-color: #F8F9FA;
+        color: #212529;
     }
     /* Przyciski */
     .stButton>button {
@@ -34,22 +34,27 @@ st.markdown("""
         border-radius: 8px;
         border: none;
         font-weight: bold;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
     .stButton>button:hover {
         background-color: #00A87E;
         color: white;
     }
-    /* Nagłówki */
+    /* Nagłówki - Ciemniejsza Mięta dla kontrastu */
     h1, h2, h3 {
-        color: #00C896 !important;
+        color: #008F7A !important;
     }
     /* Karty statystyk */
     div[data-testid="stMetricValue"] {
-        color: #00C896;
+        color: #008F7A;
     }
-    /* Tabela */
-    .dataframe {
-        font-size: 14px !important;
+    div[data-testid="stMetricLabel"] {
+        color: #6C757D;
+    }
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #FFFFFF;
+        border-radius: 5px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -416,52 +421,33 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- WYKRES RADAROWY (NOWOŚĆ WIZUALNA) ---
+# --- WYKRES RADAROWY ---
 def create_radar_chart(h_stats, a_stats, h_name, a_name):
-    # Normalizacja statystyk do skali 0-100 (szacunkowo)
-    # Atak 1.0 = 50 pkt, 2.0 = 100 pkt
-    # Obrona 1.0 = 50 pkt, 0.5 = 100 pkt (mniej = lepiej)
-    
+    # Normalizacja statystyk do skali 0-100
     def norm_att(val): return min(val * 50, 100)
-    def norm_def(val): return min((2.0 - val) * 50, 100) # Odwrócone
+    def norm_def(val): return min((2.0 - val) * 50, 100)
     
     categories = ['Atak', 'Obrona (Szczelność)', 'Forma', 'Stabilność']
     
-    # Dane Gospodarz
-    h_vals = [
-        norm_att(h_stats['att']),
-        norm_def(h_stats['def']),
-        h_stats.get('form_score', 50),
-        h_stats.get('chaos_score', 50)
-    ]
-    
-    # Dane Gość
-    a_vals = [
-        norm_att(a_stats['att']),
-        norm_def(a_stats['def']),
-        a_stats.get('form_score', 50),
-        a_stats.get('chaos_score', 50)
-    ]
+    h_vals = [norm_att(h_stats['att']), norm_def(h_stats['def']), h_stats.get('form_score', 50), h_stats.get('chaos_score', 50)]
+    a_vals = [norm_att(a_stats['att']), norm_def(a_stats['def']), a_stats.get('form_score', 50), a_stats.get('chaos_score', 50)]
     
     fig = go.Figure()
-    
-    fig.add_trace(go.Scatterpolar(
-        r=h_vals, theta=categories, fill='toself', name=h_name,
-        line_color='#00C896'
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=a_vals, theta=categories, fill='toself', name=a_name,
-        line_color='#FF4B4B'
-    ))
+    fig.add_trace(go.Scatterpolar(r=h_vals, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
+    fig.add_trace(go.Scatterpolar(r=a_vals, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
     
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 100], showticklabels=True, tickfont=dict(color='#666')),
+            angularaxis=dict(tickfont=dict(color='#333', size=12))
+        ),
         showlegend=True,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='white'),
-        margin=dict(l=20, r=20, t=20, b=20),
-        height=250
+        font=dict(color='#333'), # Ciemny tekst na jasnym tle
+        margin=dict(l=30, r=30, t=30, b=30),
+        height=250,
+        legend=dict(font=dict(color='#333'))
     )
     return fig
 
@@ -507,7 +493,6 @@ class PoissonModel:
     def _calculate_form_and_chaos(self):
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
         for team in teams:
-            # 1. Forma
             matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)].tail(5)
             form_icons = []
             scored_recent = 0
@@ -525,13 +510,11 @@ class PoissonModel:
             if len(matches) > 0:
                 avg_scored = scored_recent / len(matches)
                 att_boost = 1.0 + (avg_scored * 0.05)
-                # Form Score 0-100 (prosta metryka: wygrana=20, remis=10)
                 pts = form_icons.count("🟢")*20 + form_icons.count("🤝")*10
                 form_score = pts
             
             self.team_form[team] = {'icons': "".join(reversed(form_icons)), 'att_boost': att_boost, 'score': form_score}
 
-            # 2. Chaos
             all_matches = self.data[(self.data['HomeTeam'] == team) | (self.data['AwayTeam'] == team)]
             goals_sequence = []
             for _, row in all_matches.iterrows():
@@ -543,7 +526,6 @@ class PoissonModel:
                 std_dev = np.std(goals_sequence)
                 chaos_rating = "Stabilny 🧊" if std_dev < 0.9 else ("Chaos 🌪️" if std_dev > 1.4 else "Norma")
                 chaos_penalty = 0.9 if std_dev > 1.4 else (1.05 if std_dev < 0.9 else 1.0)
-                # Chaos Score (0 = Chaos, 100 = Stabilny)
                 chaos_score = max(0, min(100, 100 - (std_dev * 30)))
                 self.team_chaos[team] = {'rating': chaos_rating, 'factor': chaos_penalty, 'score': chaos_score}
             else:
@@ -597,7 +579,6 @@ class PoissonModel:
         
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
         
-        # --- FIX VARIABLE NAMES ---
         prob_home_0 = poisson.pmf(0, xg_h_ft)
         prob_away_0 = poisson.pmf(0, xg_a_ft)
         prob_0_0 = prob_home_0 * prob_away_0
@@ -620,8 +601,6 @@ class PoissonModel:
         form = self.team_form.get(team, {'icons': '⚪', 'att_boost': 1.0, 'score': 50})
         chaos = self.team_chaos.get(team, {'rating': '-', 'factor': 1.0, 'score': 50})
         stats = self.team_stats_ft.get(team, {'att':1.0, 'def':1.0})
-        
-        # Merge stats for radar
         combined = {**stats, 'form_score': form['score'], 'chaos_score': chaos['score']}
         return form['icons'], chaos, combined
 
@@ -719,7 +698,7 @@ class CouponGenerator:
                     'Forma': combined_form,
                     'Stabilność': chaos_desc,
                     'xG': f"{xg_h:.2f}:{xg_a:.2f}",
-                    'HomeStats': stats_h, 'AwayStats': stats_a # Dla Radaru
+                    'HomeStats': stats_h, 'AwayStats': stats_a
                 })
         return res
 
@@ -729,7 +708,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v19.0: Visual")
+st.title("☁️ MintStats v19.1: Clean Light")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY"])
@@ -944,7 +923,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                 with st.container():
                     st.subheader(f"🎫 {kupon['name']}")
                     
-                    # --- DASHBOARD KPI ---
                     df_k = pd.DataFrame(kupon['data'])
                     if not df_k.empty:
                         k1, k2, k3 = st.columns(3)
@@ -953,11 +931,9 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                         best_bet = df_k.iloc[0]
                         k3.metric("Gwiazda Kuponu", f"{best_bet['Mecz']}", delta=best_bet['Typ'])
                         
-                        # Tabela
                         disp_cols = ['Date', 'Mecz', 'Forma', 'Stabilność', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
                         
-                        # --- SZCZEGÓŁY Z RADAREM ---
                         with st.expander("🔍 Analiza Szczegółowa (Wykresy)"):
                             for idx, row in df_k.iterrows():
                                 c1, c2 = st.columns([1,3])
@@ -965,7 +941,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                                     st.markdown(f"**{row['Mecz']}**")
                                     st.caption(f"Typ: {row['Typ']} | Pewność: {row['Pewność']:.1%}")
                                 with c2:
-                                    # Generowanie wykresu radarowego
                                     if 'HomeStats' in row and 'AwayStats' in row:
                                         fig = create_radar_chart(row['HomeStats'], row['AwayStats'], row['Mecz'].split(' - ')[0], row['Mecz'].split(' - ')[1])
                                         st.plotly_chart(fig, use_container_width=True, key=f"radar_{idx}")
@@ -989,8 +964,8 @@ elif mode == "3. 📜 MOJE KUPONY":
                 df_c = pd.DataFrame(c['data'])
                 def highlight_result(val):
                     color = 'transparent'
-                    if val == '✅': color = 'rgba(0, 200, 150, 0.3)' # Mint Transparent
-                    elif val == '❌': color = 'rgba(255, 75, 75, 0.3)' # Red Transparent
+                    if val == '✅': color = '#C8E6C9' # Light Green
+                    elif val == '❌': color = '#FFCDD2' # Light Red
                     return f'background-color: {color}'
                 st.dataframe(df_c.style.applymap(highlight_result, subset=['Result']), use_container_width=True)
                 wins = len(df_c[df_c['Result'] == '✅'])
