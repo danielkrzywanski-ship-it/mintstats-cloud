@@ -16,7 +16,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v23.0 Global Radar", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="MintStats v24.0 Tactical Filter", layout="wide", page_icon="📅")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -169,24 +169,31 @@ def check_results_for_coupons():
 def evaluate_bet(bet_type, row):
     fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
     try:
-        bet_type = bet_type.split('(')[0].strip()
-        if bet_type.startswith("Win"):
-            if "Win " + row['HomeTeam'] == bet_type: return fthg > ftag
-            if "Win " + row['AwayTeam'] == bet_type: return ftag > fthg
-        if bet_type == "Over 2.5": return goals > 2.5
-        if bet_type == "Over 1.5": return goals > 1.5
-        if bet_type == "Over 0.5": return goals > 0.5
-        if bet_type == "Under 4.5": return goals <= 4.5
-        if bet_type == "Under 3.5": return goals <= 3.5
-        if bet_type == "Under 2.5": return goals <= 2.5
-        if bet_type == "BTS": return fthg > 0 and ftag > 0
-        if bet_type == "1X": return fthg >= ftag
-        if bet_type == "X2": return ftag >= fthg
-        if bet_type == "12": return fthg != ftag
-        if "strzeli" in bet_type:
-            if row['HomeTeam'] in bet_type: return fthg > 0
-            if row['AwayTeam'] in bet_type: return ftag > 0
-        if "HT Over 1.5" in bet_type:
+        bet_type_clean = bet_type.split('(')[0].strip()
+        if bet_type_clean.startswith("Win"):
+            if "Win " + row['HomeTeam'] == bet_type_clean: return fthg > ftag
+            if "Win " + row['AwayTeam'] == bet_type_clean: return ftag > fthg
+        if bet_type_clean == "Over 2.5": return goals > 2.5
+        if bet_type_clean == "Over 1.5": return goals > 1.5
+        if bet_type_clean == "Over 0.5": return goals > 0.5
+        if bet_type_clean == "Under 4.5": return goals <= 4.5
+        if bet_type_clean == "Under 3.5": return goals <= 3.5
+        if bet_type_clean == "Under 2.5": return goals <= 2.5
+        if bet_type_clean == "BTS": return fthg > 0 and ftag > 0
+        if bet_type_clean == "BTS NO": return not (fthg > 0 and ftag > 0)
+        if bet_type_clean == "1X": return fthg >= ftag
+        if bet_type_clean == "X2": return ftag >= fthg
+        if bet_type_clean == "12": return fthg != ftag
+        
+        # Nowe typy
+        if "nie strzeli" in bet_type_clean:
+            if row['HomeTeam'] in bet_type_clean: return fthg == 0
+            if row['AwayTeam'] in bet_type_clean: return ftag == 0
+        elif "strzeli" in bet_type_clean:
+            if row['HomeTeam'] in bet_type_clean: return fthg > 0
+            if row['AwayTeam'] in bet_type_clean: return ftag > 0
+            
+        if "HT Over 1.5" in bet_type_clean:
             if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
             return False
     except: return False
@@ -360,7 +367,6 @@ def create_league_scatter(df_league):
     )
     return fig
 
-# --- NOWA FUNKCJA: GLOBALNY RADAR ---
 def get_global_stats(df_all):
     stats = []
     leagues = df_all['LeagueName'].unique()
@@ -598,6 +604,22 @@ class CouponGenerator:
                     {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
                     {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
                 ]
+            
+            # --- NOWE STRATEGIE (V24.0) ---
+            elif "Obie strzelą (TAK)" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+            elif "Obie strzelą (NIE)" in strategy:
+                potential_bets.append({'typ': "BTS NO", 'prob': probs['BTS_No'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (NIE)" in strategy:
+                # 1.0 - Home_Yes (czyli szansa na 0 goli)
+                potential_bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0 - probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (NIE)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0 - probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
                 combined_form = f"{form_h} vs {form_a}"
@@ -620,7 +642,7 @@ class CouponGenerator:
                 })
         return res
 
-# --- LABORATORIUM ---
+# --- LABORATORIUM (BACKTEST & XPTS) ---
 def run_backtest(df, strategy, limit=50):
     df = df.sort_values(by='Date', ascending=False).head(limit)
     df = df.sort_values(by='Date', ascending=True)
@@ -670,7 +692,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v23.0: Global Radar")
+st.title("☁️ MintStats v24.0: Tactical Filter")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -832,39 +854,64 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         st.header("🎲 Generator Kuponów")
         c1, c2, c3 = st.columns(3)
         with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
-        with c2: strat = st.selectbox("Strategia", ["Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", "Podwójna Szansa (1X, X2, 12)", "Gole Agresywne (BTS, O2.5)", "Do Przerwy (HT O1.5)", "Twierdza (Home Win)", "Mur Obronny (Under 2.5/3.5)", "Złoty Środek (Over 1.5)", "Wszystkie Zdarzenia (Max Pewność)"])
+        with c2: strat = st.selectbox("Strategia", [
+            "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", 
+            "Podwójna Szansa (1X, X2, 12)",
+            "Gole Agresywne (BTS, O2.5)",
+            "Do Przerwy (HT O1.5)",
+            "Twierdza (Home Win)",
+            "Mur Obronny (Under 2.5/3.5)",
+            "Złoty Środek (Over 1.5)",
+            "Wszystkie Zdarzenia (Max Pewność)",
+            "Obie strzelą (TAK)",
+            "Obie strzelą (NIE)",
+            "1 drużyna strzeli (TAK)",
+            "1 drużyna strzeli (NIE)",
+            "2 drużyna strzeli (TAK)",
+            "2 drużyna strzeli (NIE)"
+        ])
         with c3:
             if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
             else:
                 num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
                 events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
                 chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
+        
+        # --- DATE FILTER ---
+        available_dates = sorted(list(set([m['Date'] for m in st.session_state.fixture_pool])))
+        selected_dates = st.multiselect("📅 Wybierz daty meczów do analizy:", available_dates, default=available_dates)
 
         if st.button("🚀 GENERUJ", type="primary"):
-            analyzed_pool = gen.analyze_pool(st.session_state.fixture_pool, strat)
-            if "Mix Bezpieczny" in strat:
-                cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
-                cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
-                cat_team = sorted([x for x in analyzed_pool if x['Kategoria'] == 'TEAM'], key=lambda x: x['Pewność'], reverse=True)
-                mixed_list = []
-                max_len = max(len(cat_dc), len(cat_uo), len(cat_team))
-                for i in range(max_len):
-                    if i < len(cat_dc): mixed_list.append(cat_dc[i])
-                    if i < len(cat_uo): mixed_list.append(cat_uo[i])
-                    if i < len(cat_team): mixed_list.append(cat_team[i])
-                final_pool = mixed_list
-            else: final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+            # Filter pool by dates
+            filtered_pool = [m for m in st.session_state.fixture_pool if m['Date'] in selected_dates]
+            
+            if not filtered_pool:
+                st.warning("Brak meczów w wybranych datach.")
+            else:
+                analyzed_pool = gen.analyze_pool(filtered_pool, strat)
+                if "Mix Bezpieczny" in strat:
+                    cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
+                    cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
+                    cat_team = sorted([x for x in analyzed_pool if x['Kategoria'] == 'TEAM'], key=lambda x: x['Pewność'], reverse=True)
+                    mixed_list = []
+                    max_len = max(len(cat_dc), len(cat_uo), len(cat_team))
+                    for i in range(max_len):
+                        if i < len(cat_dc): mixed_list.append(cat_dc[i])
+                        if i < len(cat_uo): mixed_list.append(cat_uo[i])
+                        if i < len(cat_team): mixed_list.append(cat_team[i])
+                    final_pool = mixed_list
+                else: final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
 
-            st.session_state.generated_coupons = [] 
-            if gen_mode == "Jeden Pewny Kupon":
-                st.session_state.generated_coupons.append({"name": f"Top {strat}", "data": final_pool[:coupon_len]})
-            else: 
-                candidate_pool = final_pool[:chaos_factor]
-                if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
-                else:
-                    for i in range(num_coupons):
-                        random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
-                        st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
+                st.session_state.generated_coupons = [] 
+                if gen_mode == "Jeden Pewny Kupon":
+                    st.session_state.generated_coupons.append({"name": f"Top {strat}", "data": final_pool[:coupon_len]})
+                else: 
+                    candidate_pool = final_pool[:chaos_factor]
+                    if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
+                    else:
+                        for i in range(num_coupons):
+                            random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
+                            st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
 
         if st.session_state.generated_coupons:
             st.write("---")
@@ -884,8 +931,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
                         k3.metric("Gwiazda Kuponu", f"{best_bet['Mecz']}", delta=best_bet['Typ'])
                         disp_cols = ['Date', 'Mecz', 'Forma', 'Stabilność', 'Liga', 'Typ', 'Pewność', 'xG']
                         st.dataframe(df_k[disp_cols].style.background_gradient(subset=['Pewność'], cmap="RdYlGn", vmin=0.4, vmax=0.9).format({'Pewność':'{:.1%}'}), use_container_width=True)
-                        
-                        with st.expander("🔬 WAR ROOM (Szczegóły Meczowe)"):
+                        with st.expander("🔍 WAR ROOM (Szczegóły Meczowe)"):
                             for idx, row in df_k.iterrows():
                                 st.markdown(f"### {row['Mecz']}")
                                 st.info(f"💡 AI Verdict: {row.get('Verdict', 'Brak danych')}")
