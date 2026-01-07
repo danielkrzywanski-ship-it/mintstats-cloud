@@ -16,7 +16,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v24.0 Tactical Filter", layout="wide", page_icon="📅")
+st.set_page_config(page_title="MintStats v24.2 World Edition", layout="wide", page_icon="🌎")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -43,21 +43,42 @@ TEAM_ALIASES = {
     "milan": "Milan", "napoli": "Napoli", "roma": "Roma", "ajax": "Ajax", "feyenoord": "Feyenoord",
     "benfica": "Benfica", "porto": "Porto", "celtic": "Celtic", "rangers": "Rangers",
     "valiadolia": "Valladolid", "betis": "Real Betis", "celta": "Celta", "monchengladbach": "M'gladbach",
-    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon"
+    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon",
+    "young boys": "Young Boys", "servette": "Servette", "lugano": "Lugano", "basel": "Basel",
+    "malmo": "Malmo FF", "aik": "AIK", "djurgarden": "Djurgarden", "rosenborg": "Rosenborg", "bodo/glimt": "Bodo Glimt"
 }
 
+# --- ROZSZERZONY SŁOWNIK LIG (Pełna obsługa nowych kodów) ---
 LEAGUE_NAMES = {
-    'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship',
+    # EUROPA TOP 5 + 2
+    'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship', 'E2': '🇬🇧 Anglia - League One', 'E3': '🇬🇧 Anglia - League Two', 'EC': '🇬🇧 Anglia - Conference',
     'D1': '🇩🇪 Niemcy - Bundesliga', 'D2': '🇩🇪 Niemcy - 2. Bundesliga',
     'I1': '🇮🇹 Włochy - Serie A', 'I2': '🇮🇹 Włochy - Serie B',
     'SP1': '🇪🇸 Hiszpania - La Liga', 'SP2': '🇪🇸 Hiszpania - La Liga 2',
     'F1': '🇫🇷 Francja - Ligue 1', 'F2': '🇫🇷 Francja - Ligue 2',
-    'N1': '🇳🇱 Holandia - Eredivisie', 'P1': '🇵🇹 Portugalia - Liga Portugal',
-    'B1': '🇧🇪 Belgia - Jupiler League', 'T1': '🇹🇷 Turcja - Super Lig',
-    'G1': '🇬🇷 Grecja - Super League', 'SC0': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Premiership',
-    'POL': '🇵🇱 Polska - Ekstraklasa', 'Ekstraklasa': '🇵🇱 Polska - Ekstraklasa',
-    'AUT': '🇦🇹 Austria', 'DNK': '🇩🇰 Dania', 'FIN': '🇫🇮 Finlandia',
-    'NOR': '🇳🇴 Norwegia', 'ROU': '🇷🇴 Rumunia', 'SWE': '🇸🇪 Szwecja', 'SWZ': '🇨🇭 Szwajcaria'
+    'N1': '🇳🇱 Holandia - Eredivisie', 
+    'P1': '🇵🇹 Portugalia - Liga Portugal',
+    'B1': '🇧🇪 Belgia - Jupiler League', 
+    'T1': '🇹🇷 Turcja - Super Lig',
+    'G1': '🇬🇷 Grecja - Super League',
+    'SC0': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Premiership', 'SC1': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Championship',
+    
+    # NOWE KODY Z FOOTBALL-DATA
+    'SWZ': '🇨🇭 Szwajcaria - Super League',
+    'SWE': '🇸🇪 Szwecja - Allsvenskan',
+    'ROU': '🇷🇴 Rumunia - Liga I',
+    'POL': '🇵🇱 Polska - Ekstraklasa',
+    'NOR': '🇳🇴 Norwegia - Eliteserien',
+    'IRL': '🇮🇪 Irlandia - Premier Division',
+    'FIN': '🇫🇮 Finlandia - Veikkausliiga',
+    'DNK': '🇩🇰 Dania - Superliga',
+    'AUT': '🇦🇹 Austria - Bundesliga',
+    'USA': '🇺🇸 USA - MLS',
+    'MEX': '🇲🇽 Meksyk - Liga MX',
+    'JPN': '🇯🇵 Japonia - J-League',
+    'CHN': '🇨🇳 Chiny - Super League',
+    'BRA': '🇧🇷 Brazylia - Serie A',
+    'ARG': '🇦🇷 Argentyna - Primera Division'
 }
 
 # --- FUNKCJE I BAZA DANYCH ---
@@ -185,7 +206,6 @@ def evaluate_bet(bet_type, row):
         if bet_type_clean == "X2": return ftag >= fthg
         if bet_type_clean == "12": return fthg != ftag
         
-        # Nowe typy
         if "nie strzeli" in bet_type_clean:
             if row['HomeTeam'] in bet_type_clean: return fthg == 0
             if row['AwayTeam'] in bet_type_clean: return ftag == 0
@@ -216,6 +236,7 @@ def clean_expired_matches(pool):
 
 def process_uploaded_history(files):
     all_data = []
+    detected_leagues = set()
     for uploaded_file in files:
         try:
             bytes_data = uploaded_file.getvalue()
@@ -229,6 +250,10 @@ def process_uploaded_history(files):
             if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
             df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
             df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+            
+            # Detekcja lig
+            detected_leagues.update(df_cl['Div'].unique())
+            
             df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
             all_data.append(df_cl)
         except Exception as e: st.error(f"Błąd pliku {uploaded_file.name}: {e}")
@@ -236,8 +261,9 @@ def process_uploaded_history(files):
         master = pd.concat(all_data, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
         master.to_sql('all_leagues', conn, if_exists='replace', index=False)
-        conn.close(); return len(master)
-    return 0
+        conn.close()
+        return len(master), list(detected_leagues)
+    return 0, []
 
 def clean_ocr_text_debug(text):
     lines = text.split('\n'); cleaned = []
@@ -613,7 +639,6 @@ class CouponGenerator:
             elif "1 drużyna strzeli (TAK)" in strategy:
                 potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
             elif "1 drużyna strzeli (NIE)" in strategy:
-                # 1.0 - Home_Yes (czyli szansa na 0 goli)
                 potential_bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0 - probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
             elif "2 drużyna strzeli (TAK)" in strategy:
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
@@ -692,7 +717,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.0: Tactical Filter")
+st.title("☁️ MintStats v24.2: World Edition")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -739,8 +764,10 @@ if mode == "1. 🛠️ ADMIN (Baza Danych)":
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
         with st.spinner("Przetwarzanie..."):
-            count = process_uploaded_history(uploaded_history)
-            if count > 0: st.success(f"✅ Baza zaktualizowana ({count} meczów).")
+            count, leagues_found = process_uploaded_history(uploaded_history)
+            if count > 0: 
+                st.success(f"✅ Baza zaktualizowana ({count} meczów).")
+                st.info(f"🆕 Wykryte kody lig: {', '.join(map(str, leagues_found))}")
             else: st.error("Błąd importu.")
     leagues = get_leagues_list()
     if leagues:
