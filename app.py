@@ -4,7 +4,7 @@ import numpy as np
 import sqlite3
 import difflib
 import random
-import requests # Do pobierania plików z sieci
+import requests
 from scipy.stats import poisson
 from PIL import Image
 import pytesseract
@@ -79,11 +79,10 @@ LEAGUE_NAMES = {
 # --- AUTOMATYCZNA AKTUALIZACJA ---
 def get_current_season_string():
     today = datetime.today()
-    # Jeśli mamy lipiec (7) lub później, to początek sezonu np. 24/25.
-    # Jeśli styczeń-czerwiec, to końcówka sezonu, który zaczął się rok wcześniej.
+    # Sezon 24/25 zaczyna się w lipcu 2024
     start_year = today.year if today.month >= 7 else today.year - 1
     end_year = start_year + 1
-    return f"{str(start_year)[-2:]}{str(end_year)[-2:]}" # np. "2425"
+    return f"{str(start_year)[-2:]}{str(end_year)[-2:]}"
 
 def download_and_update_db(league_codes):
     season = get_current_season_string()
@@ -92,110 +91,87 @@ def download_and_update_db(league_codes):
     
     success_count = 0
     total_rows = 0
-    errors = []
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     all_dfs = []
-
-    # 1. Pobierz aktualne dane z bazy (żeby nie nadpisywać historii, a ją uzupełniać/odświeżać)
-    # W tej wersji dla uproszczenia i spójności:
-    # Pobieramy najnowsze pliki i ZASTĘPUJEMY nimi dane w bazie dla danej ligi w bieżącym sezonie.
-    # Ale uwaga: football-data trzyma cały sezon w jednym pliku. Więc pobranie pliku = pobranie całego sezonu.
     
-    # Lista lig do sprawdzenia (wszystkie znane kody)
-    # Filtrujemy tylko te kody, które są kluczami w LEAGUE_NAMES i mają sens (np. 2-3 znaki)
+    # Kody do sprawdzenia (tylko te krótkie, systemowe)
     codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
     
     for i, code in enumerate(codes_to_check):
         status_text.text(f"Sprawdzam: {code}...")
         progress_bar.progress((i + 1) / len(codes_to_check))
         
-        # Próba 1: Główny katalog
+        # 1. Sprawdź główny katalog (Major Leagues)
         url = f"{base_url_main}{code}.csv"
-        response = requests.get(url)
-        
-        # Próba 2: Katalog "new" (dla lig egzotycznych)
-        if response.status_code != 200:
-            url = f"{base_url_extra}{code}.csv"
-            response = requests.get(url)
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code != 200:
+                # 2. Jeśli nie ma, sprawdź katalog 'new' (Extra Leagues)
+                url = f"{base_url_extra}{code}.csv"
+                response = requests.get(url, timeout=5)
             
-        if response.status_code == 200:
-            try:
-                # Wczytaj CSV z pamięci
-                df = pd.read_csv(io.StringIO(response.text))
-                
-                # --- MAPOWANIE KOLUMN (UNIVERSAL TRANSLATOR) ---
-                renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
-                df.rename(columns=renames, inplace=True)
-                
-                # Uzupełnij Div, jeśli brak
-                if 'Div' not in df.columns: df['Div'] = code
-                
-                # Walidacja
-                req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-                if all(c in df.columns for c in req_cols):
-                    # Czyszczenie
-                    cols = ['Div'] + req_cols
-                    if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+            if response.status_code == 200:
+                # Przetwarzanie
+                try:
+                    df = pd.read_csv(io.StringIO(response.text))
                     
-                    df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
-                    df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
-                    df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+                    # Mapowanie nazw
+                    renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
+                    df.rename(columns=renames, inplace=True)
                     
-                    all_dfs.append(df_cl)
-                    success_count += 1
-                    total_rows += len(df_cl)
-            except Exception as e:
-                pass # Cichy błąd przy parsowaniu, jedziemy dalej
-        
-    status_text.text("Finalizowanie...")
+                    if 'Div' not in df.columns: df['Div'] = code
+                    
+                    req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+                    if all(c in df.columns for c in req_cols):
+                        cols = ['Div'] + req_cols
+                        if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+                        
+                        df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
+                        # Format daty w plikach online bywa różny, dd/mm/yy lub dd/mm/yyyy
+                        df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+                        df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+                        
+                        all_dfs.append(df_cl)
+                        success_count += 1
+                        total_rows += len(df_cl)
+                except:
+                    continue
+        except:
+            continue
+            
+    status_text.text("Zapisywanie do bazy...")
     
     if all_dfs:
         new_data = pd.concat(all_dfs, ignore_index=True)
-        
-        # Zapisz do bazy
         conn = sqlite3.connect("mintstats.db")
-        # Tutaj robimy 'replace', bo to najbezpieczniejszy sposób na odświeżenie danych i usunięcie duplikatów w ramach sezonu
-        # W idealnym świecie: merging. W wersji KISS: Replace jest OK, o ile użytkownik wie, że to resetuje bazę do stanu "tylko to co online"
-        # ALE: Użytkownik może mieć stare sezony wgrane ręcznie.
-        # Więc: Pobieramy stare dane, usuwamy z nich te ligi, które właśnie pobraliśmy (żeby wgrać ich nowszą wersję), i łączymy.
         
         try:
+            # Pobieramy stare dane
             old_data = pd.read_sql("SELECT * FROM all_leagues", conn)
             old_data['Date'] = pd.to_datetime(old_data['Date'])
             
-            # Znajdź ligi, które pobraliśmy
-            downloaded_leagues = new_data['Div'].unique()
-            
-            # Zachowaj z historii tylko to, czego NIE pobraliśmy (np. stare sezony, jeśli div jest ten sam to usuwamy stare, bo football-data ma cały sezon)
-            # Uwaga: Football-data trzyma w pliku E0.csv TYLKO obecny sezon.
-            # Więc jeśli zrobimy replace, stracimy historię z lat poprzednich.
-            # Strategia: 
-            # 1. Weź stare dane.
-            # 2. Usuń z nich dane z OBECNEGO sezonu (zakładamy, że pobrane to obecny).
-            # 3. Doklej pobrane.
-            
+            # Data graniczna sezonu (Lipiec tego sezonu)
             current_season_start = pd.to_datetime(f"{get_current_season_string()[:2]}-07-01", format='%y-%m-%d')
             
-            # Filtrujemy stare dane: zostawiamy wszystko starsze niż lipiec tego roku startowego
-            # To prymitywne, ale skuteczne dla football-data
+            # Zostawiamy w bazie tylko stare sezony (historię), usuwamy obecny sezon
+            # (bo obecny sezon właśnie pobraliśmy w całości w wersji najnowszej)
             history_keeper = old_data[old_data['Date'] < current_season_start]
             
             final_db = pd.concat([history_keeper, new_data], ignore_index=True)
             final_db.to_sql('all_leagues', conn, if_exists='replace', index=False)
-            
         except:
-            # Jeśli bazy nie było, po prostu zapisz nowe
+            # Jeśli bazy nie było
             new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
             
         conn.close()
         return success_count, total_rows
-    
+        
     return 0, 0
 
-# --- FUNKCJE BAZOWE ---
+# --- FUNKCJE ---
 
 def get_leagues_list():
     try:
@@ -855,7 +831,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.5: Universal Translator")
+st.title("☁️ MintStats v25.0: Auto-Update")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -904,6 +880,17 @@ if uploaded_backup_coup:
 
 if mode == "1. 🛠️ ADMIN (Baza Danych)":
     st.subheader("🛠️ Zarządzanie Bazą Danych")
+    
+    st.markdown("### 🌐 Aktualizacja Online (Football-Data)")
+    if st.button("🔄 Sprawdź i Pobierz Aktualizacje"):
+        with st.spinner("Łączenie z serwerem Football-Data..."):
+            s, t = download_and_update_db(LEAGUE_NAMES)
+            if s > 0: st.success(f"✅ Pomyślnie zaktualizowano {s} lig ({t} meczów).")
+            else: st.warning("Brak nowych danych lub błąd połączenia.")
+            
+    st.divider()
+    st.markdown("### 📂 Wgrywanie Ręczne (Pliki CSV)")
+    
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
         with st.spinner("Przetwarzanie..."):
