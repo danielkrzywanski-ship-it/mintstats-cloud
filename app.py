@@ -16,7 +16,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v24.4 Super Debugger", layout="wide", page_icon="🛠️")
+st.set_page_config(page_title="MintStats v24.5 Universal Translator", layout="wide", page_icon="🌐")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -234,7 +234,6 @@ def process_uploaded_history(files):
     for uploaded_file in files:
         try:
             bytes_data = uploaded_file.getvalue()
-            # 1. Próba wczytania z różnymi kodowaniami
             try: df = pd.read_csv(io.BytesIO(bytes_data), encoding='utf-8')
             except: 
                 try: df = pd.read_csv(io.BytesIO(bytes_data), encoding='latin1')
@@ -243,27 +242,32 @@ def process_uploaded_history(files):
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
             
-            # 2. Diagnostyka brakujących kolumn
-            required_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-            missing = [c for c in required_cols if c not in df.columns]
-            if missing:
-                st.error(f"❌ Plik '{uploaded_file.name}' odrzucony. Brakuje kolumn: {missing}")
-                st.info(f"Znalezione kolumny: {list(df.columns)}")
-                continue
-
-            # 3. Obsługa braku 'Div' (użycie nazwy pliku jako kodu ligi)
+            # --- INTELLIGENT MAPPING (TŁUMACZ) ---
+            # Jeśli brak standardowych kolumn, próbuj mapować
+            renames = {
+                'Home': 'HomeTeam', 'Away': 'AwayTeam',
+                'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'
+            }
+            df.rename(columns=renames, inplace=True)
+            
+            # Jeśli brak 'Div', użyj nazwy pliku
             if 'Div' not in df.columns:
                 file_code = uploaded_file.name.replace('.csv', '').upper()
                 df['Div'] = file_code
-                st.warning(f"⚠️ Plik '{uploaded_file.name}' nie ma kolumny 'Div'. Używam kodu: '{file_code}'.")
             
             unique_divs = df['Div'].unique()
             for div in unique_divs:
                 detected_codes.add(div)
                 if div not in LEAGUE_NAMES: unknown_codes.add(div)
 
-            # 4. Czyszczenie i konwersja
-            cols = ['Div'] + required_cols
+            base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+            # Sprawdź czy teraz mamy komplet
+            if not all(col in df.columns for col in base_req):
+                missing = [c for c in base_req if c not in df.columns]
+                st.error(f"❌ Plik '{uploaded_file.name}' odrzucony po mapowaniu. Brakuje: {missing}")
+                continue
+
+            cols = base_req + ['FTR'] if 'FTR' in df.columns else base_req
             if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
             
             df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
@@ -550,7 +554,6 @@ class PoissonModel:
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
         
-        # --- FIX: Definicja zmiennych PRZED użyciem ---
         prob_home_0 = poisson.pmf(0, xg_h_ft)
         prob_away_0 = poisson.pmf(0, xg_a_ft)
         prob_0_0 = prob_home_0 * prob_away_0
@@ -737,7 +740,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.4: Super Debugger")
+st.title("☁️ MintStats v24.5: Universal Translator")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
