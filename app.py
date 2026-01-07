@@ -14,10 +14,10 @@ import os
 import json
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v25.1 Bulletproof", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="MintStats v25.2 The Auditor", layout="wide", page_icon="🕵️‍♂️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -139,6 +139,24 @@ def download_and_update_db(league_codes):
         conn.close()
         return success_count, total_rows
     return 0, 0
+
+# --- AUDYTOR BAZY DANYCH (NOWOŚĆ) ---
+def get_db_status():
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        # Zapytanie grupujące po lidze i wyciągające datę najnowszego meczu
+        query = """
+        SELECT LeagueName as Liga, COUNT(*) as Mecze, MAX(Date) as Ostatni_Mecz
+        FROM all_leagues
+        GROUP BY LeagueName
+        ORDER BY Ostatni_Mecz DESC
+        """
+        df = pd.read_sql(query, conn)
+        df['Ostatni_Mecz'] = pd.to_datetime(df['Ostatni_Mecz']).dt.strftime('%Y-%m-%d')
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
 
 # --- FUNKCJE ---
 def get_leagues_list():
@@ -509,15 +527,11 @@ class PoissonModel:
         home_goals = self.data['FTHG'].sum(); away_goals = self.data['FTAG'].sum()
         if away_goals > 0: self.home_adv_factor = home_goals / away_goals
         
-        # --- BEZPIECZNE HT ---
+        # FIX: Bezpieczne obliczanie HT (niektóre ligi nie mają danych HT)
         has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
         if has_ht: 
             lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum()
-            # FIX: Zabezpieczenie przed dzieleniem przez zero
-            if matches > 0 and lg_ht > 0:
-                self.league_avg_ht = lg_ht / matches
-            else:
-                self.league_avg_ht = 1.0 # Domyślna
+            self.league_avg_ht = lg_ht / matches if matches > 0 and lg_ht > 0 else 1.0
         else:
             self.league_avg_ht = 1.0
 
@@ -527,7 +541,6 @@ class PoissonModel:
             scored_ft = home['FTHG'].sum() + away['FTAG'].sum(); conceded_ft = home['FTAG'].sum() + away['FTHG'].sum()
             played = len(home) + len(away)
             if played > 0:
-                # FIX: Zabezpieczenie przed zerową średnią ligową
                 la_ft = self.league_avg_ft if self.league_avg_ft > 0 else 1.0
                 self.team_stats_ft[team] = {'att': (scored_ft/played)/la_ft, 'def': (conceded_ft/played)/la_ft}
                 
@@ -615,14 +628,9 @@ class PoissonModel:
         mat_ft = np.array([[poisson.pmf(i, xg_h_ft) * poisson.pmf(j, xg_a_ft) for j in range(max_goals)] for i in range(max_goals)])
         mat_ht = np.array([[poisson.pmf(i, xg_h_ht) * poisson.pmf(j, xg_a_ht) for j in range(max_goals)] for i in range(max_goals)])
         prob_1 = np.sum(np.tril(mat_ft, -1)); prob_x = np.sum(np.diag(mat_ft)); prob_2 = np.sum(np.triu(mat_ft, 1))
-        
-        prob_home_0 = poisson.pmf(0, xg_h_ft)
-        prob_away_0 = poisson.pmf(0, xg_a_ft)
-        prob_0_0 = prob_home_0 * prob_away_0
-        
+        prob_home_0 = poisson.pmf(0, xg_h_ft); prob_away_0 = poisson.pmf(0, xg_a_ft); prob_0_0 = prob_home_0 * prob_away_0
         max_prob_index = np.unravel_index(mat_ft.argmax(), mat_ft.shape)
         most_likely_score = f"{max_prob_index[0]}:{max_prob_index[1]}"
-
         return {
             "1": prob_1, "X": prob_x, "2": prob_2, "1X": prob_1+prob_x, "X2": prob_x+prob_2, "12": prob_1+prob_2,
             "BTS_Yes": np.sum(mat_ft[1:, 1:]), "BTS_No": 1.0-np.sum(mat_ft[1:, 1:]),
@@ -643,17 +651,6 @@ class PoissonModel:
         stats = self.team_stats_ft.get(team, {'att':1.0, 'def':1.0})
         combined = {**stats, 'form_score': form['score'], 'chaos_score': chaos['score']}
         return form['icons'], chaos, combined
-
-    def generate_narrative(self, xg_h, xg_a, chaos_h, chaos_a, home_adv):
-        texts = []
-        if xg_h > xg_a * 1.6: texts.append("🔥 Gospodarz jest wyraźnym faworytem (Twierdza).")
-        elif xg_a > xg_h * 1.4: texts.append("🔥 Goście dominują analitycznie.")
-        else: texts.append("⚖️ Mecz wyrównany (50/50).")
-        total_xg = xg_h + xg_a
-        if total_xg > 3.0: texts.append("🍿 Spodziewany grad goli (Wysokie xG).")
-        elif total_xg < 2.0: texts.append("🧱 Zapowiada się defensywne szachy (Niskie xG).")
-        if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
-        return " ".join(texts)
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
@@ -803,7 +800,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v25.1: Bulletproof")
+st.title("☁️ MintStats v25.2: The Auditor")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -877,10 +874,21 @@ if mode == "1. 🛠️ ADMIN (Baza Danych)":
                     st.warning(f"⚠️ Kody nierozpoznane (nieznane dla MintStats): {', '.join(map(str, unknown_codes))}")
                     st.caption("ℹ️ Te ligi zostały wgrane, ale będą widoczne pod surowym kodem (np. 'X1') zamiast pełnej nazwy.")
             else: st.error("Błąd importu. Sprawdź komunikaty powyżej.")
+    
+    # --- AUDYTOR BAZY DANYCH (NOWY PANEL) ---
+    st.divider()
+    st.markdown("### 🔍 Status Bazy Danych (Audytor)")
+    db_status = get_db_status()
+    if not db_status.empty:
+        st.caption("Poniższa tabela pokazuje, jakie dane masz w systemie i kiedy był ostatni mecz.")
+        st.dataframe(db_status, use_container_width=True)
+    else:
+        st.info("Baza danych jest pusta.")
+
     leagues = get_leagues_list()
-    if leagues:
-        st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
-    else: st.warning("Baza pusta!")
+    # if leagues:
+    #     st.write("---"); st.success(f"Dostępne ligi w bazie: {len(leagues)}"); st.write(leagues)
+    # else: st.warning("Baza pusta!")
 
 elif mode == "2. 🚀 GENERATOR KUPONÓW":
     leagues = get_leagues_list()
