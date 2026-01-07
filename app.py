@@ -4,6 +4,7 @@ import numpy as np
 import sqlite3
 import difflib
 import random
+import requests # Do pobierania plików z sieci
 from scipy.stats import poisson
 from PIL import Image
 import pytesseract
@@ -13,10 +14,10 @@ import os
 import json
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v24.6 Chronos", layout="wide", page_icon="⏳")
+st.set_page_config(page_title="MintStats v25.0 Auto-Update", layout="wide", page_icon="🔄")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -75,7 +76,126 @@ LEAGUE_NAMES = {
     'ARG': '🇦🇷 Argentyna - Primera Division'
 }
 
-# --- FUNKCJE I BAZA DANYCH ---
+# --- AUTOMATYCZNA AKTUALIZACJA ---
+def get_current_season_string():
+    today = datetime.today()
+    # Jeśli mamy lipiec (7) lub później, to początek sezonu np. 24/25.
+    # Jeśli styczeń-czerwiec, to końcówka sezonu, który zaczął się rok wcześniej.
+    start_year = today.year if today.month >= 7 else today.year - 1
+    end_year = start_year + 1
+    return f"{str(start_year)[-2:]}{str(end_year)[-2:]}" # np. "2425"
+
+def download_and_update_db(league_codes):
+    season = get_current_season_string()
+    base_url_main = f"https://www.football-data.co.uk/mmz4281/{season}/"
+    base_url_extra = "https://www.football-data.co.uk/new/"
+    
+    success_count = 0
+    total_rows = 0
+    errors = []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    all_dfs = []
+
+    # 1. Pobierz aktualne dane z bazy (żeby nie nadpisywać historii, a ją uzupełniać/odświeżać)
+    # W tej wersji dla uproszczenia i spójności:
+    # Pobieramy najnowsze pliki i ZASTĘPUJEMY nimi dane w bazie dla danej ligi w bieżącym sezonie.
+    # Ale uwaga: football-data trzyma cały sezon w jednym pliku. Więc pobranie pliku = pobranie całego sezonu.
+    
+    # Lista lig do sprawdzenia (wszystkie znane kody)
+    # Filtrujemy tylko te kody, które są kluczami w LEAGUE_NAMES i mają sens (np. 2-3 znaki)
+    codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
+    
+    for i, code in enumerate(codes_to_check):
+        status_text.text(f"Sprawdzam: {code}...")
+        progress_bar.progress((i + 1) / len(codes_to_check))
+        
+        # Próba 1: Główny katalog
+        url = f"{base_url_main}{code}.csv"
+        response = requests.get(url)
+        
+        # Próba 2: Katalog "new" (dla lig egzotycznych)
+        if response.status_code != 200:
+            url = f"{base_url_extra}{code}.csv"
+            response = requests.get(url)
+            
+        if response.status_code == 200:
+            try:
+                # Wczytaj CSV z pamięci
+                df = pd.read_csv(io.StringIO(response.text))
+                
+                # --- MAPOWANIE KOLUMN (UNIVERSAL TRANSLATOR) ---
+                renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
+                df.rename(columns=renames, inplace=True)
+                
+                # Uzupełnij Div, jeśli brak
+                if 'Div' not in df.columns: df['Div'] = code
+                
+                # Walidacja
+                req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+                if all(c in df.columns for c in req_cols):
+                    # Czyszczenie
+                    cols = ['Div'] + req_cols
+                    if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+                    
+                    df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
+                    df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+                    df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+                    
+                    all_dfs.append(df_cl)
+                    success_count += 1
+                    total_rows += len(df_cl)
+            except Exception as e:
+                pass # Cichy błąd przy parsowaniu, jedziemy dalej
+        
+    status_text.text("Finalizowanie...")
+    
+    if all_dfs:
+        new_data = pd.concat(all_dfs, ignore_index=True)
+        
+        # Zapisz do bazy
+        conn = sqlite3.connect("mintstats.db")
+        # Tutaj robimy 'replace', bo to najbezpieczniejszy sposób na odświeżenie danych i usunięcie duplikatów w ramach sezonu
+        # W idealnym świecie: merging. W wersji KISS: Replace jest OK, o ile użytkownik wie, że to resetuje bazę do stanu "tylko to co online"
+        # ALE: Użytkownik może mieć stare sezony wgrane ręcznie.
+        # Więc: Pobieramy stare dane, usuwamy z nich te ligi, które właśnie pobraliśmy (żeby wgrać ich nowszą wersję), i łączymy.
+        
+        try:
+            old_data = pd.read_sql("SELECT * FROM all_leagues", conn)
+            old_data['Date'] = pd.to_datetime(old_data['Date'])
+            
+            # Znajdź ligi, które pobraliśmy
+            downloaded_leagues = new_data['Div'].unique()
+            
+            # Zachowaj z historii tylko to, czego NIE pobraliśmy (np. stare sezony, jeśli div jest ten sam to usuwamy stare, bo football-data ma cały sezon)
+            # Uwaga: Football-data trzyma w pliku E0.csv TYLKO obecny sezon.
+            # Więc jeśli zrobimy replace, stracimy historię z lat poprzednich.
+            # Strategia: 
+            # 1. Weź stare dane.
+            # 2. Usuń z nich dane z OBECNEGO sezonu (zakładamy, że pobrane to obecny).
+            # 3. Doklej pobrane.
+            
+            current_season_start = pd.to_datetime(f"{get_current_season_string()[:2]}-07-01", format='%y-%m-%d')
+            
+            # Filtrujemy stare dane: zostawiamy wszystko starsze niż lipiec tego roku startowego
+            # To prymitywne, ale skuteczne dla football-data
+            history_keeper = old_data[old_data['Date'] < current_season_start]
+            
+            final_db = pd.concat([history_keeper, new_data], ignore_index=True)
+            final_db.to_sql('all_leagues', conn, if_exists='replace', index=False)
+            
+        except:
+            # Jeśli bazy nie było, po prostu zapisz nowe
+            new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
+            
+        conn.close()
+        return success_count, total_rows
+    
+    return 0, 0
+
+# --- FUNKCJE BAZOWE ---
 
 def get_leagues_list():
     try:
@@ -92,7 +212,6 @@ def get_all_data():
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT * FROM all_leagues", conn)
-        # Konwersja daty przy odczycie
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         conn.close()
         return df
@@ -245,10 +364,7 @@ def process_uploaded_history(files):
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
             
-            renames = {
-                'Home': 'HomeTeam', 'Away': 'AwayTeam',
-                'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'
-            }
+            renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
             df.rename(columns=renames, inplace=True)
             
             if 'Div' not in df.columns:
@@ -653,7 +769,7 @@ class CouponGenerator:
                     {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
                 ]
             
-            # --- NOWE STRATEGIE ---
+            # --- NOWE STRATEGIE (V24.0) ---
             elif "Obie strzelą (TAK)" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
             elif "Obie strzelą (NIE)" in strategy:
@@ -739,7 +855,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.6: Chronos")
+st.title("☁️ MintStats v24.5: Universal Translator")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
