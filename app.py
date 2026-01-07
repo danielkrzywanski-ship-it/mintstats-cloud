@@ -13,10 +13,10 @@ import os
 import json
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v24.5 Universal Translator", layout="wide", page_icon="🌐")
+st.set_page_config(page_title="MintStats v24.6 Chronos", layout="wide", page_icon="⏳")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -92,6 +92,8 @@ def get_all_data():
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT * FROM all_leagues", conn)
+        # Konwersja daty przy odczycie
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         conn.close()
         return df
     except: return pd.DataFrame()
@@ -100,6 +102,7 @@ def get_data_for_league(league_name):
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         conn.close()
         return df
     except: return pd.DataFrame()
@@ -242,15 +245,12 @@ def process_uploaded_history(files):
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
             
-            # --- INTELLIGENT MAPPING (TŁUMACZ) ---
-            # Jeśli brak standardowych kolumn, próbuj mapować
             renames = {
                 'Home': 'HomeTeam', 'Away': 'AwayTeam',
                 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'
             }
             df.rename(columns=renames, inplace=True)
             
-            # Jeśli brak 'Div', użyj nazwy pliku
             if 'Div' not in df.columns:
                 file_code = uploaded_file.name.replace('.csv', '').upper()
                 df['Div'] = file_code
@@ -261,10 +261,9 @@ def process_uploaded_history(files):
                 if div not in LEAGUE_NAMES: unknown_codes.add(div)
 
             base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-            # Sprawdź czy teraz mamy komplet
             if not all(col in df.columns for col in base_req):
                 missing = [c for c in base_req if c not in df.columns]
-                st.error(f"❌ Plik '{uploaded_file.name}' odrzucony po mapowaniu. Brakuje: {missing}")
+                st.error(f"❌ Plik '{uploaded_file.name}' odrzucony. Brakuje: {missing}")
                 continue
 
             cols = base_req + ['FTR'] if 'FTR' in df.columns else base_req
@@ -740,10 +739,15 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.5: Universal Translator")
+st.title("☁️ MintStats v24.6: Chronos")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
+
+# --- SUWAK HORYZONTU CZASOWEGO ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Ustawienia Modelu")
+years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
 
 # --- SEKCJA BACKUP DLA PODRÓŻNIKÓW ---
 st.sidebar.markdown("---")
@@ -805,7 +809,11 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     leagues = get_leagues_list()
     if not leagues: st.error("⛔ Baza pusta!"); st.stop()
         
+    # --- CHRONOS FILTER ---
     df_all = get_all_data()
+    cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
+    df_all = df_all[df_all['Date'] >= cutoff_date] # Apply filter
+    
     model = PoissonModel(df_all)
     gen = CouponGenerator(model)
     all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
@@ -818,6 +826,9 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     with tab_manual:
         sel_league = st.selectbox("Liga:", leagues)
         df_l = get_data_for_league(sel_league)
+        # Filter league data as well
+        df_l = df_l[df_l['Date'] >= cutoff_date]
+        
         teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
         with st.form("manual_add"):
             col_date, col_h, col_a = st.columns([1,2,2])
@@ -875,10 +886,13 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     with st.expander("📊 Mapa Siły Ligowej (Scatter Plot)", expanded=False):
         sel_scatter_league = st.selectbox("Wybierz Ligę do Analizy:", leagues, key="scatter_league")
         df_scatter = get_data_for_league(sel_scatter_league)
+        # Apply Chronos filter to Scatter Plot too
+        df_scatter = df_scatter[df_scatter['Date'] >= cutoff_date]
+        
         if not df_scatter.empty:
             fig_scatter = create_league_scatter(df_scatter)
             st.plotly_chart(fig_scatter, use_container_width=True)
-        else: st.warning("Brak danych dla tej ligi.")
+        else: st.warning("Brak danych dla tej ligi w wybranym okresie.")
 
     st.subheader("📋 Terminarz")
     col_clean, col_clear = st.columns(2)
@@ -1050,6 +1064,9 @@ elif mode == "4. 🧪 LABORATORIUM":
         
         if st.button("🔥 Uruchom Test"):
             df = get_data_for_league(sel_lg)
+            # Apply Chronos filter to Backtest too
+            df = df[df['Date'] >= cutoff_date]
+            
             if df.empty: st.error("Brak danych!")
             else:
                 with st.spinner("Symulowanie przeszłości..."):
@@ -1067,6 +1084,7 @@ elif mode == "4. 🧪 LABORATORIUM":
         sel_xp_lg = st.selectbox("Liga:", leagues, key="xp_lg")
         if sel_xp_lg:
             df = get_data_for_league(sel_xp_lg)
+            df = df[df['Date'] >= cutoff_date] # Apply Chronos filter
             if not df.empty:
                 x_table = calculate_xpts_table(df)
                 st.info("💡 Diff > 0: Drużyna ma więcej punktów niż powinna (Szczęście).\nDiff < 0: Drużyna ma mniej punktów niż powinna (Pech - warto grać na nich).")
@@ -1079,9 +1097,10 @@ elif mode == "4. 🧪 LABORATORIUM":
 
     with tab3:
         st.subheader("🌍 Ranking Statystyczny Lig")
-        df_all = get_all_data()
-        if not df_all.empty:
-            df_glob = get_global_stats(df_all)
+        df_all_glob = get_all_data()
+        df_all_glob = df_all_glob[df_all_glob['Date'] >= cutoff_date] # Apply Chronos filter
+        if not df_all_glob.empty:
+            df_glob = get_global_stats(df_all_glob)
             sel_metric = st.selectbox("Sortuj według:", ['Śr. Goli', '1 (%)', 'BTS (%)', 'Over 2.5 (%)'])
             df_glob = df_glob.sort_values(by=sel_metric, ascending=False)
             
