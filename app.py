@@ -16,11 +16,11 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v24.2 World Edition", layout="wide", page_icon="🌎")
+st.set_page_config(page_title="MintStats v24.3 The Inspector", layout="wide", page_icon="🕵️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
-# --- CUSTOM CSS (CLEAN LIGHT UI) ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #F8F9FA; color: #212529; }
@@ -28,7 +28,6 @@ st.markdown("""
     .stButton>button:hover { background-color: #00A87E; color: white; }
     h1, h2, h3 { color: #008F7A !important; }
     div[data-testid="stMetricValue"] { color: #008F7A; }
-    div[data-testid="stMetricLabel"] { color: #6C757D; }
     .streamlit-expanderHeader { background-color: #FFFFFF; border-radius: 5px; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
@@ -45,12 +44,13 @@ TEAM_ALIASES = {
     "valiadolia": "Valladolid", "betis": "Real Betis", "celta": "Celta", "monchengladbach": "M'gladbach",
     "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon",
     "young boys": "Young Boys", "servette": "Servette", "lugano": "Lugano", "basel": "Basel",
-    "malmo": "Malmo FF", "aik": "AIK", "djurgarden": "Djurgarden", "rosenborg": "Rosenborg", "bodo/glimt": "Bodo Glimt"
+    "malmo": "Malmo FF", "aik": "AIK", "djurgarden": "Djurgarden", "rosenborg": "Rosenborg", "bodo/glimt": "Bodo Glimt",
+    "legia": "Legia Warsaw", "lech": "Lech Poznan", "rakow": "Rakow Czestochowa"
 }
 
-# --- ROZSZERZONY SŁOWNIK LIG (Pełna obsługa nowych kodów) ---
+# --- ROZSZERZONY SŁOWNIK LIG ---
 LEAGUE_NAMES = {
-    # EUROPA TOP 5 + 2
+    # EUROPA TOP
     'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship', 'E2': '🇬🇧 Anglia - League One', 'E3': '🇬🇧 Anglia - League Two', 'EC': '🇬🇧 Anglia - Conference',
     'D1': '🇩🇪 Niemcy - Bundesliga', 'D2': '🇩🇪 Niemcy - 2. Bundesliga',
     'I1': '🇮🇹 Włochy - Serie A', 'I2': '🇮🇹 Włochy - Serie B',
@@ -61,9 +61,9 @@ LEAGUE_NAMES = {
     'B1': '🇧🇪 Belgia - Jupiler League', 
     'T1': '🇹🇷 Turcja - Super Lig',
     'G1': '🇬🇷 Grecja - Super League',
-    'SC0': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Premiership', 'SC1': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Championship',
+    'SC0': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Premiership', 'SC1': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - Championship', 'SC2': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - League One', 'SC3': '🏴󠁧󠁢󠁳󠁣󠁴󠁿 Szkocja - League Two',
     
-    # NOWE KODY Z FOOTBALL-DATA
+    # EXTRA LEAGUES (Twoja lista)
     'SWZ': '🇨🇭 Szwajcaria - Super League',
     'SWE': '🇸🇪 Szwecja - Allsvenskan',
     'ROU': '🇷🇴 Rumunia - Liga I',
@@ -236,7 +236,9 @@ def clean_expired_matches(pool):
 
 def process_uploaded_history(files):
     all_data = []
-    detected_leagues = set()
+    detected_codes = set()
+    unknown_codes = set()
+    
     for uploaded_file in files:
         try:
             bytes_data = uploaded_file.getvalue()
@@ -244,16 +246,23 @@ def process_uploaded_history(files):
             except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';')
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
+            
+            # Sprawdzenie czy to plik z ligami
+            if 'Div' not in df.columns: continue
+            
+            # Logowanie kodów
+            unique_divs = df['Div'].unique()
+            for div in unique_divs:
+                detected_codes.add(div)
+                if div not in LEAGUE_NAMES:
+                    unknown_codes.add(div)
+
             base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
             if not all(col in df.columns for col in base_req): continue
             cols = base_req + ['FTR']
             if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
             df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
             df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
-            
-            # Detekcja lig
-            detected_leagues.update(df_cl['Div'].unique())
-            
             df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
             all_data.append(df_cl)
         except Exception as e: st.error(f"Błąd pliku {uploaded_file.name}: {e}")
@@ -262,8 +271,8 @@ def process_uploaded_history(files):
         conn = sqlite3.connect("mintstats.db")
         master.to_sql('all_leagues', conn, if_exists='replace', index=False)
         conn.close()
-        return len(master), list(detected_leagues)
-    return 0, []
+        return len(master), list(detected_codes), list(unknown_codes)
+    return 0, [], []
 
 def clean_ocr_text_debug(text):
     lines = text.split('\n'); cleaned = []
@@ -327,7 +336,7 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- WYKRESY I WIZUALIZACJE (WAR ROOM) ---
+# --- WYKRESY ---
 def create_radar_chart(h_stats, a_stats, h_name, a_name):
     def norm_att(val): return min(val * 50, 100)
     def norm_def(val): return min((2.0 - val) * 50, 100)
@@ -717,7 +726,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v24.2: World Edition")
+st.title("☁️ MintStats v24.3: The Inspector")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -764,10 +773,14 @@ if mode == "1. 🛠️ ADMIN (Baza Danych)":
     uploaded_history = st.file_uploader("Wgraj pliki ligowe (Historia)", type=['csv'], accept_multiple_files=True)
     if uploaded_history and st.button("Aktualizuj Bazę Danych"):
         with st.spinner("Przetwarzanie..."):
-            count, leagues_found = process_uploaded_history(uploaded_history)
+            count, leagues_found, unknown_codes = process_uploaded_history(uploaded_history)
             if count > 0: 
                 st.success(f"✅ Baza zaktualizowana ({count} meczów).")
                 st.info(f"🆕 Wykryte kody lig: {', '.join(map(str, leagues_found))}")
+                
+                if unknown_codes:
+                    st.warning(f"⚠️ Kody nierozpoznane (nieznane dla MintStats): {', '.join(map(str, unknown_codes))}")
+                    st.caption("ℹ️ Te ligi zostały wgrane, ale będą widoczne pod surowym kodem (np. 'X1') zamiast pełnej nazwy.")
             else: st.error("Błąd importu.")
     leagues = get_leagues_list()
     if leagues:
