@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v25.0 Auto-Update", layout="wide", page_icon="🔄")
+st.set_page_config(page_title="MintStats v25.1 Bulletproof", layout="wide", page_icon="🛡️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -79,7 +79,6 @@ LEAGUE_NAMES = {
 # --- AUTOMATYCZNA AKTUALIZACJA ---
 def get_current_season_string():
     today = datetime.today()
-    # Sezon 24/25 zaczyna się w lipcu 2024
     start_year = today.year if today.month >= 7 else today.year - 1
     end_year = start_year + 1
     return f"{str(start_year)[-2:]}{str(end_year)[-2:]}"
@@ -88,91 +87,60 @@ def download_and_update_db(league_codes):
     season = get_current_season_string()
     base_url_main = f"https://www.football-data.co.uk/mmz4281/{season}/"
     base_url_extra = "https://www.football-data.co.uk/new/"
-    
     success_count = 0
     total_rows = 0
-    
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     all_dfs = []
-    
-    # Kody do sprawdzenia (tylko te krótkie, systemowe)
     codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
     
     for i, code in enumerate(codes_to_check):
         status_text.text(f"Sprawdzam: {code}...")
         progress_bar.progress((i + 1) / len(codes_to_check))
-        
-        # 1. Sprawdź główny katalog (Major Leagues)
         url = f"{base_url_main}{code}.csv"
         try:
             response = requests.get(url, timeout=5)
             if response.status_code != 200:
-                # 2. Jeśli nie ma, sprawdź katalog 'new' (Extra Leagues)
                 url = f"{base_url_extra}{code}.csv"
                 response = requests.get(url, timeout=5)
             
             if response.status_code == 200:
-                # Przetwarzanie
                 try:
                     df = pd.read_csv(io.StringIO(response.text))
-                    
-                    # Mapowanie nazw
                     renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
                     df.rename(columns=renames, inplace=True)
-                    
                     if 'Div' not in df.columns: df['Div'] = code
-                    
                     req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
                     if all(c in df.columns for c in req_cols):
                         cols = ['Div'] + req_cols
                         if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
-                        
                         df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
-                        # Format daty w plikach online bywa różny, dd/mm/yy lub dd/mm/yyyy
                         df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
                         df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
-                        
                         all_dfs.append(df_cl)
                         success_count += 1
                         total_rows += len(df_cl)
-                except:
-                    continue
-        except:
-            continue
+                except: continue
+        except: continue
             
     status_text.text("Zapisywanie do bazy...")
-    
     if all_dfs:
         new_data = pd.concat(all_dfs, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
-        
         try:
-            # Pobieramy stare dane
             old_data = pd.read_sql("SELECT * FROM all_leagues", conn)
             old_data['Date'] = pd.to_datetime(old_data['Date'])
-            
-            # Data graniczna sezonu (Lipiec tego sezonu)
             current_season_start = pd.to_datetime(f"{get_current_season_string()[:2]}-07-01", format='%y-%m-%d')
-            
-            # Zostawiamy w bazie tylko stare sezony (historię), usuwamy obecny sezon
-            # (bo obecny sezon właśnie pobraliśmy w całości w wersji najnowszej)
             history_keeper = old_data[old_data['Date'] < current_season_start]
-            
             final_db = pd.concat([history_keeper, new_data], ignore_index=True)
             final_db.to_sql('all_leagues', conn, if_exists='replace', index=False)
         except:
-            # Jeśli bazy nie było
             new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
-            
         conn.close()
         return success_count, total_rows
-        
     return 0, 0
 
 # --- FUNKCJE ---
-
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db")
@@ -223,8 +191,7 @@ def load_saved_coupons():
                     data_json = row['Data'].replace("'", '"')
                     coupon_data = json.loads(data_json)
                     coupons.append({
-                        'id': row['ID'], 'name': row['Name'],
-                        'date_created': row['DateCreated'], 'data': coupon_data
+                        'id': row['ID'], 'name': row['Name'], 'date_created': row['DateCreated'], 'data': coupon_data
                     })
                 except: continue
             return coupons
@@ -328,7 +295,6 @@ def process_uploaded_history(files):
     all_data = []
     detected_codes = set()
     unknown_codes = set()
-    
     for uploaded_file in files:
         try:
             bytes_data = uploaded_file.getvalue()
@@ -336,38 +302,29 @@ def process_uploaded_history(files):
             except: 
                 try: df = pd.read_csv(io.BytesIO(bytes_data), encoding='latin1')
                 except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';', encoding='latin1')
-            
             if len(df.columns) < 2: continue
             df.columns = [c.strip() for c in df.columns]
-            
             renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
             df.rename(columns=renames, inplace=True)
-            
             if 'Div' not in df.columns:
                 file_code = uploaded_file.name.replace('.csv', '').upper()
                 df['Div'] = file_code
-            
             unique_divs = df['Div'].unique()
             for div in unique_divs:
                 detected_codes.add(div)
                 if div not in LEAGUE_NAMES: unknown_codes.add(div)
-
             base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
             if not all(col in df.columns for col in base_req):
                 missing = [c for c in base_req if c not in df.columns]
                 st.error(f"❌ Plik '{uploaded_file.name}' odrzucony. Brakuje: {missing}")
                 continue
-
             cols = base_req + ['FTR'] if 'FTR' in df.columns else base_req
             if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
-            
             df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
             df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
             df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
             all_data.append(df_cl)
-            
         except Exception as e: st.error(f"Krytyczny błąd pliku {uploaded_file.name}: {e}")
-        
     if all_data:
         master = pd.concat(all_data, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
@@ -551,19 +508,33 @@ class PoissonModel:
         self.league_avg_ft = lg_ft / matches if matches > 0 else 1.0
         home_goals = self.data['FTHG'].sum(); away_goals = self.data['FTAG'].sum()
         if away_goals > 0: self.home_adv_factor = home_goals / away_goals
-        has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
-        if has_ht: lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum(); self.league_avg_ht = lg_ht / matches if matches > 0 else 1.0
         
+        # --- BEZPIECZNE HT ---
+        has_ht = 'HTHG' in self.data.columns and 'HTAG' in self.data.columns
+        if has_ht: 
+            lg_ht = self.data['HTHG'].sum() + self.data['HTAG'].sum()
+            # FIX: Zabezpieczenie przed dzieleniem przez zero
+            if matches > 0 and lg_ht > 0:
+                self.league_avg_ht = lg_ht / matches
+            else:
+                self.league_avg_ht = 1.0 # Domyślna
+        else:
+            self.league_avg_ht = 1.0
+
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
         for team in teams:
             home = self.data[self.data['HomeTeam'] == team]; away = self.data[self.data['AwayTeam'] == team]
             scored_ft = home['FTHG'].sum() + away['FTAG'].sum(); conceded_ft = home['FTAG'].sum() + away['FTHG'].sum()
             played = len(home) + len(away)
             if played > 0:
-                self.team_stats_ft[team] = {'att': (scored_ft/played)/self.league_avg_ft, 'def': (conceded_ft/played)/self.league_avg_ft}
+                # FIX: Zabezpieczenie przed zerową średnią ligową
+                la_ft = self.league_avg_ft if self.league_avg_ft > 0 else 1.0
+                self.team_stats_ft[team] = {'att': (scored_ft/played)/la_ft, 'def': (conceded_ft/played)/la_ft}
+                
                 if has_ht:
                     scored_ht = home['HTHG'].sum() + away['HTAG'].sum(); conceded_ht = home['HTAG'].sum() + away['HTHG'].sum()
-                    self.team_stats_ht[team] = {'attack': (scored_ht/played)/self.league_avg_ht, 'defense': (conceded_ht/played)/self.league_avg_ht}
+                    la_ht = self.league_avg_ht if self.league_avg_ht > 0 else 1.0
+                    self.team_stats_ht[team] = {'attack': (scored_ht/played)/la_ht, 'defense': (conceded_ht/played)/la_ht}
 
     def _calculate_form_and_chaos(self):
         teams = pd.concat([self.data['HomeTeam'], self.data['AwayTeam']]).unique()
@@ -826,20 +797,23 @@ def calculate_xpts_table(df):
     return df_table.sort_values(by='xPts', ascending=False)
 
 # --- INIT ---
+# Global variables moved to top for scope safety
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v25.0: Auto-Update")
+st.title("☁️ MintStats v25.1: Bulletproof")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
-# --- SUWAK HORYZONTU CZASOWEGO ---
+# --- SUWAK HORYZONTU CZASOWEGO (GLOBALNY) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Ustawienia Modelu")
 years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
+# Obliczamy datę odcięcia RAZ dla całej aplikacji
+cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
 
 # --- SEKCJA BACKUP DLA PODRÓŻNIKÓW ---
 st.sidebar.markdown("---")
@@ -914,8 +888,8 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         
     # --- CHRONOS FILTER ---
     df_all = get_all_data()
-    cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
-    df_all = df_all[df_all['Date'] >= cutoff_date] # Apply filter
+    # Filter with global cutoff_date
+    df_all = df_all[df_all['Date'] >= cutoff_date] 
     
     model = PoissonModel(df_all)
     gen = CouponGenerator(model)
