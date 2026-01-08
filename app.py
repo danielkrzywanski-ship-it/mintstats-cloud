@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.5 The Safety Net", layout="wide", page_icon="🕸️")
+st.set_page_config(page_title="MintStats v26.6 Resurrection", layout="wide", page_icon="🧟‍♂️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -224,9 +224,7 @@ def evaluate_bet(bet_type, row):
         if "(+1.5)" in bet_type_clean and row['HomeTeam'] in bet_type_clean: return (fthg + 1.5) > ftag
         if "(+1.5)" in bet_type_clean and row['AwayTeam'] in bet_type_clean: return (ftag + 1.5) > fthg
         
-        # --- DNB (Draw No Bet) ---
-        # Zwraca True jeśli wygrana, False jeśli przegrana. 
-        # Remis obsługiwany w check_results_for_coupons jako zwrot.
+        # --- DNB ---
         if "DNB" in bet_type_clean:
             if row['HomeTeam'] in bet_type_clean: return fthg > ftag
             if row['AwayTeam'] in bet_type_clean: return ftag > fthg
@@ -660,8 +658,8 @@ class PoissonModel:
         # --- DNB MATH ---
         # W DNB remis nie istnieje. Prawdopodobieństwo jest skalowane do 100% z pominięciem X.
         # Prob(DNB Home) = Prob(1) / (Prob(1) + Prob(2))
-        prob_dnb_home = prob_1 / (prob_1 + prob_2)
-        prob_dnb_away = prob_2 / (prob_1 + prob_2)
+        prob_dnb_home = prob_1 / (prob_1 + prob_2) if (prob_1 + prob_2) > 0 else 0
+        prob_dnb_away = prob_2 / (prob_1 + prob_2) if (prob_1 + prob_2) > 0 else 0
 
         max_prob_index = np.unravel_index(mat_ft.argmax(), mat_ft.shape)
         most_likely_score = f"{max_prob_index[0]}:{max_prob_index[1]}"
@@ -709,7 +707,109 @@ class PoissonModel:
         if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
         return " ".join(texts)
 
-# --- 7. CACHE ---
+# --- CLASS COUPON GENERATOR (TU BYŁ BŁĄD - PRZYWRÓCONA) ---
+class CouponGenerator:
+    def __init__(self, model): self.model = model
+    def analyze_pool(self, pool, strategy="Mix Bezpieczny"):
+        res = []
+        for m in pool:
+            xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
+            if xg_h is None: continue
+            probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
+            h2h_warning = self.model.get_h2h_analysis(m['Home'], m['Away'])
+            form_h, chaos_h, stats_h = self.model.get_team_info(m['Home'])
+            form_a, chaos_a, stats_a = self.model.get_team_info(m['Away'])
+            chaos_factor = chaos_h['factor'] * chaos_a['factor']
+            for key in probs: 
+                if isinstance(probs[key], float): probs[key] *= chaos_factor
+            mc_stats = self.model.simulate_match_monte_carlo(xg_h, xg_a)
+            warning = ""
+            if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
+            if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
+            if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
+            chaos_desc = ""
+            if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
+            if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
+            if "🧊" in chaos_h['rating'] and "🧊" in chaos_a['rating']: chaos_desc = "🧊 STABLE"
+            
+            verdict = self.model.generate_narrative(xg_h, xg_a, chaos_h, chaos_a, self.model.home_adv_factor)
+
+            potential_bets = []
+            if "Mix Bezpieczny" in strategy:
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC', 'mc_key': '2'})
+                potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM', 'mc_key': None})
+            elif "Podwójna Szansa" in strategy:
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'})
+                potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Gole Agresywne" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+                potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'})
+            elif "Do Przerwy" in strategy:
+                potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Twierdza" in strategy:
+                potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'})
+            elif "Mur Obronny" in strategy:
+                potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Złoty Środek" in strategy:
+                potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
+            
+            # --- STRATEGIE STRZELECKIE ---
+            elif "Obie strzelą (TAK)" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+            elif "Obie strzelą (NIE)" in strategy:
+                potential_bets.append({'typ': "BTS NO", 'prob': probs['BTS_No'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (NIE)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0 - probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (NIE)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0 - probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+
+            # --- HANDICAPY ---
+            elif "Handicap: Dominacja Faworyta (-1.5)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} (-1.5)", 'prob': probs['H_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} (-1.5)", 'prob': probs['A_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Handicap: Tarcza Underdoga (+1.5)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} (+1.5)", 'prob': probs['H_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} (+1.5)", 'prob': probs['A_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+
+            # --- DNB ---
+            elif "DNB: Gospodarz" in strategy:
+                potential_bets.append({'typ': f"DNB {m['Home']}", 'prob': probs['DNB_Home'], 'cat': 'MAIN', 'mc_key': None})
+            elif "DNB: Gość" in strategy:
+                potential_bets.append({'typ': f"DNB {m['Away']}", 'prob': probs['DNB_Away'], 'cat': 'MAIN', 'mc_key': None})
+
+            if potential_bets:
+                best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
+                combined_form = f"{form_h} vs {form_a}"
+                if warning: combined_form += f" {warning}"
+                mc_info = ""
+                key = best.get('mc_key')
+                if key and key in mc_stats:
+                    val = mc_stats[key]
+                    if "1" in key or "2" in key:
+                        if val > 80: mc_info = " (MC: 80%+)"
+                        elif val < 50 and best['prob'] > 0.5: mc_info = " (MC: RYZYKO)"
+                    else: mc_info = f" (MC: {int(val)}%)"
+                
+                score_pred = f" ({probs['Exact_Score']})"
+                res.append({
+                    'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Date': m.get('Date', 'N/A'),
+                    'Typ': best['typ'] + mc_info + score_pred, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
+                    'Forma': combined_form, 'Stabilność': chaos_desc, 'xG': f"{xg_h:.2f}:{xg_a:.2f}",
+                    'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score'], 'Verdict': verdict
+                })
+        return res
+
+# --- 7. CACHE (MUSI BYĆ POD KLASAMI) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_and_filter_data(cutoff_date):
     try:
@@ -777,7 +877,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- 10. INTERFEJS UŻYTKOWNIKA ---
-st.title("☁️ MintStats v26.5: The Safety Net")
+st.title("☁️ MintStats v26.6: Resurrection")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
