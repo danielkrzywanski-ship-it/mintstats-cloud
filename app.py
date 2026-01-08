@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.6 Resurrection", layout="wide", page_icon="🧟‍♂️")
+st.set_page_config(page_title="MintStats v26.7 Cache Buster", layout="wide", page_icon="🧹")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -758,6 +758,16 @@ class CouponGenerator:
                 potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
             elif "Złoty Środek" in strategy:
                 potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
+            elif "Wszystkie" in strategy:
+                potential_bets = [
+                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'},
+                    {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
+                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
+                ]
             
             # --- STRATEGIE STRZELECKIE ---
             elif "Obie strzelą (TAK)" in strategy:
@@ -886,6 +896,12 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Ustawienia Modelu")
 years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
 cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
+
+# --- CACHE BUSTER BUTTON ---
+if st.sidebar.button("🧹 Wyczyść Pamięć (Cache)"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.sidebar.success("Cache wyczyszczony!")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Kopia Zapasowa (Praca <-> Dom)")
