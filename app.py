@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.0 Turbocharger", layout="wide", page_icon="🏎️")
+st.set_page_config(page_title="MintStats v26.1 Hotfix", layout="wide", page_icon="🩹")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -76,7 +76,340 @@ LEAGUE_NAMES = {
     'ARG': '🇦🇷 Argentyna - Primera Division'
 }
 
-# --- MODEL POISSONA (KLASA) ---
+# --- FUNKCJE I KLASY (TERAZ NA GÓRZE!) ---
+
+def get_leagues_list():
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='all_leagues';")
+        if cursor.fetchone() is None: return []
+        df = pd.read_sql("SELECT DISTINCT LeagueName FROM all_leagues ORDER BY LeagueName", conn)
+        conn.close()
+        return df['LeagueName'].tolist()
+    except: return []
+
+def get_all_data():
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues", conn)
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        conn.close()
+        return df
+    except: return pd.DataFrame()
+
+def get_data_for_league(league_name):
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        conn.close()
+        return df
+    except: return pd.DataFrame()
+
+def load_fixture_pool():
+    if os.path.exists(FIXTURES_DB_FILE):
+        try: return pd.read_csv(FIXTURES_DB_FILE).to_dict('records')
+        except: return []
+    return []
+
+def save_fixture_pool(pool_data):
+    if pool_data: pd.DataFrame(pool_data).to_csv(FIXTURES_DB_FILE, index=False)
+    else:
+        if os.path.exists(FIXTURES_DB_FILE): os.remove(FIXTURES_DB_FILE)
+
+def load_saved_coupons():
+    if os.path.exists(COUPONS_DB_FILE):
+        try: 
+            df = pd.read_csv(COUPONS_DB_FILE)
+            coupons = []
+            for _, row in df.iterrows():
+                try:
+                    data_json = row['Data'].replace("'", '"')
+                    coupon_data = json.loads(data_json)
+                    coupons.append({
+                        'id': row['ID'], 'name': row['Name'],
+                        'date_created': row['DateCreated'], 'data': coupon_data
+                    })
+                except: continue
+            return coupons
+        except: return []
+    return []
+
+def save_new_coupon(name, coupon_data):
+    coupons = load_saved_coupons()
+    new_id = len(coupons) + 1
+    simplified_data = []
+    for bet in coupon_data:
+        simplified_data.append({
+            'Mecz': bet['Mecz'], 'Home': bet['Mecz'].split(' - ')[0], 'Away': bet['Mecz'].split(' - ')[1],
+            'Typ': bet['Typ'], 'Date': bet.get('Date', 'N/A'), 'Pewność': bet['Pewność'],
+            'Result': '?', 'Forma': bet.get('Forma', ''), 'Stabilność': bet.get('Stabilność', ''),
+            'Wynik': bet.get('Wynik', ''), 'Verdict': bet.get('Verdict', '')
+        })
+    new_entry = {
+        'ID': new_id, 'Name': name, 'DateCreated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'Data': json.dumps(simplified_data)
+    }
+    df_new = pd.DataFrame([new_entry])
+    if os.path.exists(COUPONS_DB_FILE): df_new.to_csv(COUPONS_DB_FILE, mode='a', header=False, index=False)
+    else: df_new.to_csv(COUPONS_DB_FILE, index=False)
+
+def check_results_for_coupons():
+    coupons = load_saved_coupons()
+    if not coupons: return []
+    conn = sqlite3.connect("mintstats.db")
+    df_history = pd.read_sql("SELECT * FROM all_leagues", conn)
+    conn.close()
+    updated_coupons = []
+    for coupon in coupons:
+        bets = coupon['data']
+        processed_bets = []
+        for bet in bets:
+            status = bet.get('Result', '?')
+            if status in ['✅', '❌']: processed_bets.append(bet); continue
+            h, a = bet['Home'], bet['Away']
+            match = df_history[(df_history['HomeTeam'] == h) & (df_history['AwayTeam'] == a)]
+            if not match.empty:
+                row = match.iloc[0]
+                res = evaluate_bet(bet['Typ'], row)
+                bet['Result'] = '✅' if res else '❌'
+                bet['Score'] = f"{int(row['FTHG'])}:{int(row['FTAG'])}"
+            processed_bets.append(bet)
+        coupon['data'] = processed_bets
+        updated_coupons.append(coupon)
+    df_save = pd.DataFrame([{
+        'ID': c['id'], 'Name': c['name'], 'DateCreated': c['date_created'], 'Data': json.dumps(c['data'])
+    } for c in updated_coupons])
+    df_save.to_csv(COUPONS_DB_FILE, index=False)
+    return updated_coupons
+
+def evaluate_bet(bet_type, row):
+    fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
+    try:
+        bet_type_clean = bet_type.split('(')[0].strip()
+        if bet_type_clean.startswith("Win"):
+            if "Win " + row['HomeTeam'] == bet_type_clean: return fthg > ftag
+            if "Win " + row['AwayTeam'] == bet_type_clean: return ftag > fthg
+        if bet_type_clean == "Over 2.5": return goals > 2.5
+        if bet_type_clean == "Over 1.5": return goals > 1.5
+        if bet_type_clean == "Over 0.5": return goals > 0.5
+        if bet_type_clean == "Under 4.5": return goals <= 4.5
+        if bet_type_clean == "Under 3.5": return goals <= 3.5
+        if bet_type_clean == "Under 2.5": return goals <= 2.5
+        if bet_type_clean == "BTS": return fthg > 0 and ftag > 0
+        if bet_type_clean == "BTS NO": return not (fthg > 0 and ftag > 0)
+        if bet_type_clean == "1X": return fthg >= ftag
+        if bet_type_clean == "X2": return ftag >= fthg
+        if bet_type_clean == "12": return fthg != ftag
+        if "nie strzeli" in bet_type_clean:
+            if row['HomeTeam'] in bet_type_clean: return fthg == 0
+            if row['AwayTeam'] in bet_type_clean: return ftag == 0
+        elif "strzeli" in bet_type_clean:
+            if row['HomeTeam'] in bet_type_clean: return fthg > 0
+            if row['AwayTeam'] in bet_type_clean: return ftag > 0
+        if "HT Over 1.5" in bet_type_clean:
+            if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
+            return False
+    except: return False
+    return False
+
+def check_team_conflict(home, away, pool):
+    for m in pool:
+        if m['Home'] == home and m['Away'] == away: return f"⛔ Mecz {home} vs {away} jest już na liście!"
+    return None
+
+def clean_expired_matches(pool):
+    today_str = datetime.today().strftime('%Y-%m-%d'); new_pool = []; removed = 0
+    for m in pool:
+        if 'Date' not in m or not m['Date'] or str(m['Date']) == 'nan': new_pool.append(m); continue
+        try:
+            if str(m['Date']) >= today_str: new_pool.append(m)
+            else: removed += 1
+        except: new_pool.append(m)
+    return new_pool, removed
+
+def process_uploaded_history(files):
+    all_data = []
+    detected_codes = set()
+    unknown_codes = set()
+    for uploaded_file in files:
+        try:
+            bytes_data = uploaded_file.getvalue()
+            try: df = pd.read_csv(io.BytesIO(bytes_data), encoding='utf-8')
+            except: 
+                try: df = pd.read_csv(io.BytesIO(bytes_data), encoding='latin1')
+                except: df = pd.read_csv(io.BytesIO(bytes_data), sep=';', encoding='latin1')
+            if len(df.columns) < 2: continue
+            df.columns = [c.strip() for c in df.columns]
+            renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
+            df.rename(columns=renames, inplace=True)
+            if 'Div' not in df.columns:
+                file_code = uploaded_file.name.replace('.csv', '').upper()
+                df['Div'] = file_code
+            unique_divs = df['Div'].unique()
+            for div in unique_divs:
+                detected_codes.add(div)
+                if div not in LEAGUE_NAMES: unknown_codes.add(div)
+            base_req = ['Div', 'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+            if not all(col in df.columns for col in base_req):
+                missing = [c for c in base_req if c not in df.columns]
+                st.error(f"❌ Plik '{uploaded_file.name}' odrzucony. Brakuje: {missing}")
+                continue
+            cols = base_req + ['FTR'] if 'FTR' in df.columns else base_req
+            if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+            df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
+            df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+            df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+            all_data.append(df_cl)
+        except Exception as e: st.error(f"Krytyczny błąd pliku {uploaded_file.name}: {e}")
+    if all_data:
+        master = pd.concat(all_data, ignore_index=True)
+        conn = sqlite3.connect("mintstats.db")
+        master.to_sql('all_leagues', conn, if_exists='replace', index=False)
+        conn.close()
+        return len(master), list(detected_codes), list(unknown_codes)
+    return 0, [], []
+
+def clean_ocr_text_debug(text):
+    lines = text.split('\n'); cleaned = []
+    for line in lines:
+        normalized = re.sub(r'[^a-zA-Z0-9 ]', ' ', line).strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
+        if len(normalized) > 2: cleaned.append(normalized)
+    return cleaned
+
+def extract_text_from_image(uploaded_file):
+    try: image = Image.open(uploaded_file); return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
+    except Exception as e: return f"Error OCR: {e}"
+
+def resolve_team_name(raw_name, available_teams):
+    cur = raw_name.lower().strip()
+    for alias, db_name in TEAM_ALIASES.items():
+        if alias == cur: return db_name
+        if len(alias) > 3 and alias in cur: return db_name
+    match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
+    if match:
+        for real_name in available_teams:
+            if real_name.lower() == match[0]: return real_name
+    return None
+
+def parse_raw_text(text_input, available_teams):
+    lines = text_input.split('\n'); found_matches = []; today_str = datetime.today().strftime('%Y-%m-%d')
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        line = re.sub(r'\d{2}:\d{2}', '', line)
+        parts = []
+        if " - " in line: parts = line.split(" - ")
+        elif " vs " in line: parts = line.split(" vs ")
+        if len(parts) >= 2:
+            raw_home = parts[0]; raw_away_chunk = parts[1]; raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
+            home_team = resolve_team_name(raw_home, available_teams); away_team = resolve_team_name(raw_away, available_teams)
+            if home_team and away_team and home_team != away_team:
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': today_str})
+    return found_matches
+
+def smart_parse_matches_v3(text_input, available_teams):
+    cleaned_lines = clean_ocr_text_debug(text_input); found_teams = []; debug_log = []; today_str = datetime.today().strftime('%Y-%m-%d')
+    for line in cleaned_lines:
+        cur = line.lower().strip(); matched = resolve_team_name(cur, available_teams)
+        if matched:
+            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
+            debug_log.append(f"✅ '{cur}' -> '{matched}'")
+        else: debug_log.append(f"❌ '{cur}'")
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': today_str} for i in range(0, len(found_teams) - 1, 2)]
+    return matches, debug_log, cleaned_lines
+
+def parse_fixtures_csv(file):
+    try:
+        df = pd.read_csv(file)
+        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
+        if 'Date' in df.columns: df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+        else: df['Date'] = datetime.today().strftime('%Y-%m-%d')
+        matches = []
+        for _, row in df.iterrows(): matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
+        return matches, None
+    except Exception as e: return [], str(e)
+
+# --- AUTOMATYCZNA AKTUALIZACJA ---
+def get_current_season_string():
+    today = datetime.today()
+    start_year = today.year if today.month >= 7 else today.year - 1
+    end_year = start_year + 1
+    return f"{str(start_year)[-2:]}{str(end_year)[-2:]}"
+
+def download_and_update_db(league_codes):
+    season = get_current_season_string()
+    base_url_main = f"https://www.football-data.co.uk/mmz4281/{season}/"
+    base_url_extra = "https://www.football-data.co.uk/new/"
+    success_count = 0
+    total_rows = 0
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    all_dfs = []
+    codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
+    
+    for i, code in enumerate(codes_to_check):
+        status_text.text(f"Sprawdzam: {code}...")
+        progress_bar.progress((i + 1) / len(codes_to_check))
+        url = f"{base_url_main}{code}.csv"
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code != 200:
+                url = f"{base_url_extra}{code}.csv"
+                response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                try:
+                    df = pd.read_csv(io.StringIO(response.text))
+                    renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
+                    df.rename(columns=renames, inplace=True)
+                    if 'Div' not in df.columns: df['Div'] = code
+                    req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+                    if all(c in df.columns for c in req_cols):
+                        cols = ['Div'] + req_cols
+                        if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
+                        df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
+                        df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
+                        df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
+                        all_dfs.append(df_cl)
+                        success_count += 1
+                        total_rows += len(df_cl)
+                except: continue
+        except: continue
+            
+    status_text.text("Zapisywanie do bazy...")
+    if all_dfs:
+        new_data = pd.concat(all_dfs, ignore_index=True)
+        conn = sqlite3.connect("mintstats.db")
+        try:
+            old_data = pd.read_sql("SELECT * FROM all_leagues", conn)
+            old_data['Date'] = pd.to_datetime(old_data['Date'])
+            current_season_start = pd.to_datetime(f"{get_current_season_string()[:2]}-07-01", format='%y-%m-%d')
+            history_keeper = old_data[old_data['Date'] < current_season_start]
+            final_db = pd.concat([history_keeper, new_data], ignore_index=True)
+            final_db.to_sql('all_leagues', conn, if_exists='replace', index=False)
+        except:
+            new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
+        conn.close()
+        st.cache_data.clear() # CLEAR CACHE
+        return success_count, total_rows
+    return 0, 0
+
+def get_db_status():
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        query = "SELECT LeagueName as Liga, COUNT(*) as Mecze, MAX(Date) as Ostatni_Mecz FROM all_leagues GROUP BY LeagueName ORDER BY Ostatni_Mecz DESC"
+        df = pd.read_sql(query, conn)
+        df['Ostatni_Mecz'] = pd.to_datetime(df['Ostatni_Mecz']).dt.strftime('%Y-%m-%d')
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
+
+# --- MODEL POISSONA ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
@@ -240,7 +573,7 @@ class PoissonModel:
         if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
         return " ".join(texts)
 
-# --- BUFOROWANIE DANYCH (TURBO) ---
+# --- BUFOROWANIE DANYCH ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_and_filter_data(cutoff_date):
     """Wczytuje dane z SQL i filtruje po dacie. Wynik jest buforowany."""
@@ -358,101 +691,70 @@ class CouponGenerator:
                 })
         return res
 
-# --- INNE FUNKCJE (BEZ ZMIAN LUB DOSTOSOWANE) ---
-def get_current_season_string():
-    today = datetime.today()
-    start_year = today.year if today.month >= 7 else today.year - 1
-    end_year = start_year + 1
-    return f"{str(start_year)[-2:]}{str(end_year)[-2:]}"
+# --- LABORATORIUM (BACKTEST & XPTS) ---
+def run_backtest(df, strategy, limit=50):
+    df = df.sort_values(by='Date', ascending=False).head(limit)
+    df = df.sort_values(by='Date', ascending=True)
+    model = PoissonModel(df) 
+    gen = CouponGenerator(model)
+    pool = []
+    for _, row in df.iterrows(): pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
+    generated_tips = gen.analyze_pool(pool, strategy)
+    results = {'Correct': 0, 'Wrong': 0, 'Total': 0}
+    for tip in generated_tips:
+        home, away = tip['Mecz'].split(' - ')
+        match = df[(df['HomeTeam'] == home) & (df['AwayTeam'] == away)]
+        if not match.empty:
+            actual = match.iloc[0]
+            raw_type = tip['Typ'].split('(')[0].strip()
+            is_hit = False
+            try: is_hit = evaluate_bet(raw_type, actual)
+            except: pass
+            if is_hit: results['Correct'] += 1
+            else: results['Wrong'] += 1
+            results['Total'] += 1
+    return results
 
-def download_and_update_db(league_codes):
-    season = get_current_season_string()
-    base_url_main = f"https://www.football-data.co.uk/mmz4281/{season}/"
-    base_url_extra = "https://www.football-data.co.uk/new/"
-    success_count = 0
-    total_rows = 0
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    all_dfs = []
-    codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
-    
-    for i, code in enumerate(codes_to_check):
-        status_text.text(f"Sprawdzam: {code}...")
-        progress_bar.progress((i + 1) / len(codes_to_check))
-        url = f"{base_url_main}{code}.csv"
-        try:
-            response = requests.get(url, timeout=5)
-            if response.status_code != 200:
-                url = f"{base_url_extra}{code}.csv"
-                response = requests.get(url, timeout=5)
-            
-            if response.status_code == 200:
-                try:
-                    df = pd.read_csv(io.StringIO(response.text))
-                    renames = {'Home': 'HomeTeam', 'Away': 'AwayTeam', 'HG': 'FTHG', 'AG': 'FTAG', 'Res': 'FTR'}
-                    df.rename(columns=renames, inplace=True)
-                    if 'Div' not in df.columns: df['Div'] = code
-                    req_cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-                    if all(c in df.columns for c in req_cols):
-                        cols = ['Div'] + req_cols
-                        if 'HTHG' in df.columns and 'HTAG' in df.columns: cols.extend(['HTHG', 'HTAG'])
-                        df_cl = df[cols].copy().dropna(subset=['HomeTeam', 'FTHG'])
-                        df_cl['Date'] = pd.to_datetime(df_cl['Date'], dayfirst=True, errors='coerce')
-                        df_cl['LeagueName'] = df_cl['Div'].map(LEAGUE_NAMES).fillna(df_cl['Div'])
-                        all_dfs.append(df_cl)
-                        success_count += 1
-                        total_rows += len(df_cl)
-                except: continue
-        except: continue
-            
-    status_text.text("Zapisywanie do bazy...")
-    if all_dfs:
-        new_data = pd.concat(all_dfs, ignore_index=True)
-        conn = sqlite3.connect("mintstats.db")
-        try:
-            old_data = pd.read_sql("SELECT * FROM all_leagues", conn)
-            old_data['Date'] = pd.to_datetime(old_data['Date'])
-            current_season_start = pd.to_datetime(f"{get_current_season_string()[:2]}-07-01", format='%y-%m-%d')
-            history_keeper = old_data[old_data['Date'] < current_season_start]
-            final_db = pd.concat([history_keeper, new_data], ignore_index=True)
-            final_db.to_sql('all_leagues', conn, if_exists='replace', index=False)
-        except:
-            new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
-        conn.close()
-        
-        # CLEAR CACHE AFTER UPDATE
-        st.cache_data.clear()
-        
-        return success_count, total_rows
-    return 0, 0
-
-def get_db_status():
-    try:
-        conn = sqlite3.connect("mintstats.db")
-        query = "SELECT LeagueName as Liga, COUNT(*) as Mecze, MAX(Date) as Ostatni_Mecz FROM all_leagues GROUP BY LeagueName ORDER BY Ostatni_Mecz DESC"
-        df = pd.read_sql(query, conn)
-        df['Ostatni_Mecz'] = pd.to_datetime(df['Ostatni_Mecz']).dt.strftime('%Y-%m-%d')
-        conn.close()
-        return df
-    except:
-        return pd.DataFrame()
+def calculate_xpts_table(df):
+    model = PoissonModel(df)
+    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
+    table = {t: {'P': 0, 'xPts': 0.0} for t in teams}
+    for _, row in df.iterrows():
+        h, a = row['HomeTeam'], row['AwayTeam']
+        if row['FTHG'] > row['FTAG']: table[h]['P'] += 3
+        elif row['FTHG'] == row['FTAG']: table[h]['P'] += 1; table[a]['P'] += 1
+        else: table[a]['P'] += 3
+        xg_h, xg_a, _, _ = model.predict(h, a)
+        if xg_h:
+            probs = model.calculate_probs(xg_h, xg_a, 0, 0)
+            table[h]['xPts'] += (probs['1']*3 + probs['X']*1)
+            table[a]['xPts'] += (probs['2']*3 + probs['X']*1)
+    df_table = pd.DataFrame.from_dict(table, orient='index').reset_index()
+    df_table.columns = ['Team', 'Pts', 'xPts']
+    df_table['Diff'] = df_table['Pts'] - df_table['xPts']
+    df_table['xPts'] = df_table['xPts'].round(1); df_table['Diff'] = df_table['Diff'].round(1)
+    return df_table.sort_values(by='xPts', ascending=False)
 
 # --- INIT ---
+# Global variables moved to top for scope safety
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- INTERFEJS ---
-st.title("☁️ MintStats v26.0: Turbocharger")
+st.title("☁️ MintStats v26.1: Hotfix")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
+# --- SUWAK HORYZONTU CZASOWEGO (GLOBALNY) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Ustawienia Modelu")
 years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
+# Obliczamy datę odcięcia RAZ dla całej aplikacji
 cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
 
+# --- SEKCJA BACKUP DLA PODRÓŻNIKÓW ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Kopia Zapasowa (Praca <-> Dom)")
 
