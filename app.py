@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.3 Architecture Fix", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="MintStats v26.4 Handicap Edition", layout="wide", page_icon="📉")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -75,7 +75,7 @@ LEAGUE_NAMES = {
     'ARG': '🇦🇷 Argentyna - Primera Division'
 }
 
-# --- 4. FUNKCJE POMOCNICZE (DATABASE, OCR, UTILS) ---
+# --- 4. FUNKCJE POMOCNICZE ---
 
 def get_leagues_list():
     try:
@@ -187,6 +187,8 @@ def evaluate_bet(bet_type, row):
     fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
     try:
         bet_type_clean = bet_type.split('(')[0].strip()
+        
+        # --- STANDARDOWE TYPY ---
         if bet_type_clean.startswith("Win"):
             if "Win " + row['HomeTeam'] == bet_type_clean: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type_clean: return ftag > fthg
@@ -210,6 +212,21 @@ def evaluate_bet(bet_type, row):
         if "HT Over 1.5" in bet_type_clean:
             if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
             return False
+
+        # --- HANDICAPY (NOWE) ---
+        # Home -1.5 (Gospodarz wygrywa min. 2 golami)
+        if "(-1.5)" in bet_type_clean and row['HomeTeam'] in bet_type_clean:
+            return fthg >= (ftag + 2)
+        # Away -1.5 (Gość wygrywa min. 2 golami)
+        if "(-1.5)" in bet_type_clean and row['AwayTeam'] in bet_type_clean:
+            return ftag >= (fthg + 2)
+        # Home +1.5 (Gospodarz nie przegra wyżej niż 1 golem lub wygra)
+        if "(+1.5)" in bet_type_clean and row['HomeTeam'] in bet_type_clean:
+            return (fthg + 1.5) > ftag
+        # Away +1.5 (Gość nie przegra wyżej niż 1 golem lub wygra)
+        if "(+1.5)" in bet_type_clean and row['AwayTeam'] in bet_type_clean:
+            return (ftag + 1.5) > fthg
+
     except: return False
     return False
 
@@ -623,6 +640,19 @@ class PoissonModel:
         prob_away_0 = poisson.pmf(0, xg_a_ft)
         prob_0_0 = prob_home_0 * prob_away_0
         
+        # --- HANDICAP MATH ---
+        # Home -1.5: Home wins by 2+ (e.g. 2:0, 3:1) -> i >= j + 2
+        prob_h_minus_1_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i >= j + 2])
+        
+        # Away -1.5: Away wins by 2+ (e.g. 0:2, 1:3) -> j >= i + 2
+        prob_a_minus_1_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if j >= i + 2])
+        
+        # Home +1.5: Home loses by max 1, draws, or wins. (Opposite of Away -1.5)
+        prob_h_plus_1_5 = 1.0 - prob_a_minus_1_5
+        
+        # Away +1.5: Away loses by max 1, draws, or wins. (Opposite of Home -1.5)
+        prob_a_plus_1_5 = 1.0 - prob_h_minus_1_5
+
         max_prob_index = np.unravel_index(mat_ft.argmax(), mat_ft.shape)
         most_likely_score = f"{max_prob_index[0]}:{max_prob_index[1]}"
 
@@ -637,6 +667,13 @@ class PoissonModel:
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0,
+            
+            # Nowe klucze dla Handicapów
+            "H_Minus_1_5": prob_h_minus_1_5,
+            "A_Minus_1_5": prob_a_minus_1_5,
+            "H_Plus_1_5": prob_h_plus_1_5,
+            "A_Plus_1_5": prob_a_plus_1_5,
+
             "Exact_Score": most_likely_score
         }
     
@@ -657,6 +694,24 @@ class PoissonModel:
         elif total_xg < 2.0: texts.append("🧱 Zapowiada się defensywne szachy (Niskie xG).")
         if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
         return " ".join(texts)
+
+# --- 7. CACHE ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_and_filter_data(cutoff_date):
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues", conn)
+        conn.close()
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df[df['Date'] >= cutoff_date]
+        return df
+    except:
+        return pd.DataFrame()
+
+@st.cache_resource(show_spinner=False)
+def get_cached_model(data_hash_key, _df):
+    if _df.empty: return None
+    return PoissonModel(_df)
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
@@ -708,18 +763,8 @@ class CouponGenerator:
                 potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
             elif "Złoty Środek" in strategy:
                 potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
-            elif "Wszystkie" in strategy:
-                potential_bets = [
-                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
-                    {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN', 'mc_key': '2'},
-                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'},
-                    {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'},
-                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'},
-                    {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
-                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
-                ]
             
-            # --- NOWE STRATEGIE (V24.0) ---
+            # --- STRATEGIE STRZELECKIE ---
             elif "Obie strzelą (TAK)" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
             elif "Obie strzelą (NIE)" in strategy:
@@ -732,6 +777,16 @@ class CouponGenerator:
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
             elif "2 drużyna strzeli (NIE)" in strategy:
                 potential_bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0 - probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+
+            # --- NOWE STRATEGIE HANDICAP ---
+            elif "Handicap: Dominacja Faworyta (-1.5)" in strategy:
+                # Szukamy wysokiej szansy na wygraną różnicą 2 goli
+                potential_bets.append({'typ': f"{m['Home']} (-1.5)", 'prob': probs['H_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} (-1.5)", 'prob': probs['A_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Handicap: Tarcza Underdoga (+1.5)" in strategy:
+                # Szukamy pewnego 'zwycięstwa' z bonusem 1.5 gola (czyli przegrana max 1 golem, remis lub win)
+                potential_bets.append({'typ': f"{m['Home']} (+1.5)", 'prob': probs['H_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} (+1.5)", 'prob': probs['A_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
 
             if potential_bets:
                 best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
@@ -754,24 +809,6 @@ class CouponGenerator:
                     'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score'], 'Verdict': verdict
                 })
         return res
-
-# --- 7. CACHE (MUSI BYĆ POD KLASAMI) ---
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_and_filter_data(cutoff_date):
-    try:
-        conn = sqlite3.connect("mintstats.db")
-        df = pd.read_sql("SELECT * FROM all_leagues", conn)
-        conn.close()
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df = df[df['Date'] >= cutoff_date]
-        return df
-    except:
-        return pd.DataFrame()
-
-@st.cache_resource(show_spinner=False)
-def get_cached_model(data_hash_key, _df):
-    if _df.empty: return None
-    return PoissonModel(_df)
 
 # --- 8. LOGIKA APLIKACJI (BACKTEST, XPTS) ---
 def run_backtest(df, strategy, limit=50):
@@ -823,7 +860,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- 10. INTERFEJS UŻYTKOWNIKA ---
-st.title("☁️ MintStats v26.3: Architecture Fix")
+st.title("☁️ MintStats v26.4: Handicap Edition")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -1026,13 +1063,14 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             "Twierdza (Home Win)",
             "Mur Obronny (Under 2.5/3.5)",
             "Złoty Środek (Over 1.5)",
-            "Wszystkie Zdarzenia (Max Pewność)",
             "Obie strzelą (TAK)",
             "Obie strzelą (NIE)",
             "1 drużyna strzeli (TAK)",
             "1 drużyna strzeli (NIE)",
             "2 drużyna strzeli (TAK)",
-            "2 drużyna strzeli (NIE)"
+            "2 drużyna strzeli (NIE)",
+            "Handicap: Dominacja Faworyta (-1.5)",
+            "Handicap: Tarcza Underdoga (+1.5)"
         ])
         with c3:
             if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
@@ -1159,6 +1197,7 @@ elif mode == "4. 🧪 LABORATORIUM":
         
         if st.button("🔥 Uruchom Test"):
             df = get_data_for_league(sel_lg)
+            # Apply Chronos filter to Backtest too
             df = df[df['Date'] >= cutoff_date]
             
             if df.empty: st.error("Brak danych!")
