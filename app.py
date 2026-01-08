@@ -16,12 +16,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, date, timedelta
 
-# --- KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.2 Missing Link", layout="wide", page_icon="🔗")
+# --- 1. KONFIGURACJA ---
+st.set_page_config(page_title="MintStats v26.3 Architecture Fix", layout="wide", page_icon="🏗️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
-# --- CUSTOM CSS ---
+# --- 2. CUSTOM CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #F8F9FA; color: #212529; }
@@ -33,7 +33,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SŁOWNIK ALIASÓW ---
+# --- 3. SŁOWNIKI ---
 TEAM_ALIASES = {
     "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "brag": "Sp Braga", "braga": "Sp Braga",
     "sc braga": "Sp Braga", "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "fc porto": "Porto",
@@ -49,7 +49,6 @@ TEAM_ALIASES = {
     "legia": "Legia Warsaw", "lech": "Lech Poznan", "rakow": "Rakow Czestochowa"
 }
 
-# --- SŁOWNIK LIG ---
 LEAGUE_NAMES = {
     'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship', 'E2': '🇬🇧 Anglia - League One', 'E3': '🇬🇧 Anglia - League Two', 'EC': '🇬🇧 Anglia - Conference',
     'D1': '🇩🇪 Niemcy - Bundesliga', 'D2': '🇩🇪 Niemcy - 2. Bundesliga',
@@ -76,7 +75,7 @@ LEAGUE_NAMES = {
     'ARG': '🇦🇷 Argentyna - Primera Division'
 }
 
-# --- FUNKCJE I KLASY (WŁAŚCIWA KOLEJNOŚĆ) ---
+# --- 4. FUNKCJE POMOCNICZE (DATABASE, OCR, UTILS) ---
 
 def get_leagues_list():
     try:
@@ -333,7 +332,6 @@ def parse_fixtures_csv(file):
         return matches, None
     except Exception as e: return [], str(e)
 
-# --- AUTOMATYCZNA AKTUALIZACJA ---
 def get_current_season_string():
     today = datetime.today()
     start_year = today.year if today.month >= 7 else today.year - 1
@@ -350,7 +348,6 @@ def download_and_update_db(league_codes):
     status_text = st.empty()
     all_dfs = []
     codes_to_check = list(set([k for k in LEAGUE_NAMES.keys() if len(k) <= 4]))
-    
     for i, code in enumerate(codes_to_check):
         status_text.text(f"Sprawdzam: {code}...")
         progress_bar.progress((i + 1) / len(codes_to_check))
@@ -360,7 +357,6 @@ def download_and_update_db(league_codes):
             if response.status_code != 200:
                 url = f"{base_url_extra}{code}.csv"
                 response = requests.get(url, timeout=5)
-            
             if response.status_code == 200:
                 try:
                     df = pd.read_csv(io.StringIO(response.text))
@@ -379,7 +375,6 @@ def download_and_update_db(league_codes):
                         total_rows += len(df_cl)
                 except: continue
         except: continue
-            
     status_text.text("Zapisywanie do bazy...")
     if all_dfs:
         new_data = pd.concat(all_dfs, ignore_index=True)
@@ -394,7 +389,7 @@ def download_and_update_db(league_codes):
         except:
             new_data.to_sql('all_leagues', conn, if_exists='replace', index=False)
         conn.close()
-        st.cache_data.clear() # CLEAR CACHE
+        st.cache_data.clear()
         return success_count, total_rows
     return 0, 0
 
@@ -409,7 +404,97 @@ def get_db_status():
     except:
         return pd.DataFrame()
 
-# --- MODEL POISSONA ---
+# --- 5. WYKRESY ---
+def create_radar_chart(h_stats, a_stats, h_name, a_name):
+    def norm_att(val): return min(val * 50, 100)
+    def norm_def(val): return min((2.0 - val) * 50, 100)
+    categories = ['Atak', 'Obrona (Szczelność)', 'Forma', 'Stabilność']
+    h_vals = [norm_att(h_stats['att']), norm_def(h_stats['def']), h_stats.get('form_score', 50), h_stats.get('chaos_score', 50)]
+    a_vals = [norm_att(a_stats['att']), norm_def(a_stats['def']), a_stats.get('form_score', 50), a_stats.get('chaos_score', 50)]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(r=h_vals, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
+    fig.add_trace(go.Scatterpolar(r=a_vals, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100], showticklabels=True), angularaxis=dict(tickfont=dict(color='#333', size=12))),
+        showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'), margin=dict(l=30, r=30, t=30, b=30), height=250, legend=dict(font=dict(color='#333'))
+    )
+    return fig
+
+def create_score_heatmap(xg_h, xg_a):
+    max_g = 6
+    matrix = [[poisson.pmf(h, xg_h) * poisson.pmf(a, xg_a) for a in range(max_g)] for h in range(max_g)]
+    fig = go.Figure(data=go.Heatmap(
+        z=matrix, x=[str(i) for i in range(max_g)], y=[str(i) for i in range(max_g)],
+        colorscale='Mint', texttemplate="%{z:.1%}"
+    ))
+    fig.update_layout(
+        title="Prawdopodobieństwo Wyniku", xaxis_title="Gole Gości", yaxis_title="Gole Gospodarzy",
+        height=300, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig
+
+def create_goal_distribution(xg_h, xg_a, h_name, a_name):
+    max_g = 5
+    h_probs = [poisson.pmf(i, xg_h)*100 for i in range(max_g)]
+    a_probs = [poisson.pmf(i, xg_a)*100 for i in range(max_g)]
+    x_labels = [str(i) for i in range(max_g-1)] + ["4+"]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name=h_name, x=x_labels, y=h_probs, marker_color='#00C896'))
+    fig.add_trace(go.Bar(name=a_name, x=x_labels, y=a_probs, marker_color='#FF4B4B'))
+    fig.update_layout(
+        title="Rozkład Goli", barmode='group', xaxis_title="Liczba Goli", yaxis_title="Szansa (%)",
+        height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig
+
+def create_league_scatter(df_league):
+    model = PoissonModel(df_league)
+    teams = []; att = []; defn = []
+    for team, stats in model.team_stats_ft.items():
+        teams.append(team); att.append(stats['att']); defn.append(stats['def'])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=att, y=defn, mode='markers+text', text=teams, textposition='top center',
+        marker=dict(size=12, color='#00C896', line=dict(width=2, color='DarkSlateGrey'))
+    ))
+    fig.add_vline(x=1.0, line_width=1, line_dash="dash", line_color="grey")
+    fig.add_hline(y=1.0, line_width=1, line_dash="dash", line_color="grey")
+    fig.add_annotation(x=1.5, y=0.5, text="👑 DOMINATORZY", showarrow=False, font=dict(size=14, color="green"))
+    fig.add_annotation(x=0.5, y=1.5, text="💀 DO BICIA", showarrow=False, font=dict(size=14, color="red"))
+    fig.add_annotation(x=1.5, y=1.5, text="🍿 WESOŁY FUTBOL", showarrow=False, font=dict(size=12, color="orange"))
+    fig.add_annotation(x=0.5, y=0.5, text="🧱 MURARZE", showarrow=False, font=dict(size=12, color="blue"))
+    fig.update_layout(
+        title="Mapa Siły Ligowej", xaxis_title="Siła Ataku (>1.0 Dobrze)", yaxis_title="Dziurawość Obrony (>1.0 Źle)",
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'),
+        yaxis=dict(autorange="reversed")
+    )
+    return fig
+
+def get_global_stats(df_all):
+    stats = []
+    leagues = df_all['LeagueName'].unique()
+    for lg in leagues:
+        d = df_all[df_all['LeagueName'] == lg]
+        total = len(d)
+        if total < 10: continue
+        goals = d['FTHG'].sum() + d['FTAG'].sum()
+        avg_goals = goals / total
+        home_wins = len(d[d['FTHG'] > d['FTAG']])
+        draws = len(d[d['FTHG'] == d['FTAG']])
+        away_wins = len(d[d['FTHG'] < d['FTAG']])
+        bts = len(d[(d['FTHG'] > 0) & (d['FTAG'] > 0)])
+        over25 = len(d[(d['FTHG'] + d['FTAG']) > 2.5])
+        stats.append({
+            'Liga': lg, 'Mecze': total, 'Śr. Goli': round(avg_goals, 2),
+            '1 (%)': round((home_wins/total)*100, 1),
+            'X (%)': round((draws/total)*100, 1),
+            '2 (%)': round((away_wins/total)*100, 1),
+            'BTS (%)': round((bts/total)*100, 1),
+            'Over 2.5 (%)': round((over25/total)*100, 1)
+        })
+    return pd.DataFrame(stats)
+
+# --- 6. KLASY MODELI ---
 class PoissonModel:
     def __init__(self, data):
         self.data = data
@@ -573,106 +658,111 @@ class PoissonModel:
         if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
         return " ".join(texts)
 
-# --- WYKRESY (TERAZ TUTAJ!) ---
-def create_radar_chart(h_stats, a_stats, h_name, a_name):
-    def norm_att(val): return min(val * 50, 100)
-    def norm_def(val): return min((2.0 - val) * 50, 100)
-    categories = ['Atak', 'Obrona (Szczelność)', 'Forma', 'Stabilność']
-    h_vals = [norm_att(h_stats['att']), norm_def(h_stats['def']), h_stats.get('form_score', 50), h_stats.get('chaos_score', 50)]
-    a_vals = [norm_att(a_stats['att']), norm_def(a_stats['def']), a_stats.get('form_score', 50), a_stats.get('chaos_score', 50)]
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=h_vals, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
-    fig.add_trace(go.Scatterpolar(r=a_vals, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 100], showticklabels=True), angularaxis=dict(tickfont=dict(color='#333', size=12))),
-        showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'), margin=dict(l=30, r=30, t=30, b=30), height=250, legend=dict(font=dict(color='#333'))
-    )
-    return fig
+class CouponGenerator:
+    def __init__(self, model): self.model = model
+    def analyze_pool(self, pool, strategy="Mix Bezpieczny"):
+        res = []
+        for m in pool:
+            xg_h, xg_a, xg_h_ht, xg_a_ht = self.model.predict(m['Home'], m['Away'])
+            if xg_h is None: continue
+            probs = self.model.calculate_probs(xg_h, xg_a, xg_h_ht, xg_a_ht)
+            h2h_warning = self.model.get_h2h_analysis(m['Home'], m['Away'])
+            form_h, chaos_h, stats_h = self.model.get_team_info(m['Home'])
+            form_a, chaos_a, stats_a = self.model.get_team_info(m['Away'])
+            chaos_factor = chaos_h['factor'] * chaos_a['factor']
+            for key in probs: 
+                if isinstance(probs[key], float): probs[key] *= chaos_factor
+            mc_stats = self.model.simulate_match_monte_carlo(xg_h, xg_a)
+            warning = ""
+            if "🔴🔴🔴" in form_h and probs['1'] > 0.6: warning = "⚠️ KRYZYS GOSP."
+            if "🔴🔴🔴" in form_a and probs['2'] > 0.6: warning = "⚠️ KRYZYS GOŚĆ"
+            if h2h_warning and probs['1'] > 0.5: warning += " " + h2h_warning
+            chaos_desc = ""
+            if "🌪️" in chaos_h['rating']: chaos_desc += f"🌪️ {m['Home']} "
+            if "🌪️" in chaos_a['rating']: chaos_desc += f"🌪️ {m['Away']}"
+            if "🧊" in chaos_h['rating'] and "🧊" in chaos_a['rating']: chaos_desc = "🧊 STABLE"
+            
+            verdict = self.model.generate_narrative(xg_h, xg_a, chaos_h, chaos_a, self.model.home_adv_factor)
 
-def create_score_heatmap(xg_h, xg_a):
-    max_g = 6
-    matrix = [[poisson.pmf(h, xg_h) * poisson.pmf(a, xg_a) for a in range(max_g)] for h in range(max_g)]
-    fig = go.Figure(data=go.Heatmap(
-        z=matrix, x=[str(i) for i in range(max_g)], y=[str(i) for i in range(max_g)],
-        colorscale='Mint', texttemplate="%{z:.1%}"
-    ))
-    fig.update_layout(
-        title="Prawdopodobieństwo Wyniku", xaxis_title="Gole Gości", yaxis_title="Gole Gospodarzy",
-        height=300, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
-    )
-    return fig
+            potential_bets = []
+            if "Mix Bezpieczny" in strategy:
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'DC', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'DC', 'mc_key': '2'})
+                potential_bets.append({'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': "Over 0.5", 'prob': probs['Over_0.5_FT'], 'cat': 'U/O', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'TEAM', 'mc_key': None})
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'TEAM', 'mc_key': None})
+            elif "Podwójna Szansa" in strategy:
+                potential_bets.append({'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'})
+                potential_bets.append({'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'})
+                potential_bets.append({'typ': "12", 'prob': probs['12'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Gole Agresywne" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+                potential_bets.append({'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'})
+            elif "Do Przerwy" in strategy:
+                potential_bets.append({'typ': "HT Over 1.5", 'prob': probs['Over_1.5_HT'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Twierdza" in strategy:
+                potential_bets.append({'typ': f"Win {m['Home']}", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'})
+            elif "Mur Obronny" in strategy:
+                potential_bets.append({'typ': "Under 2.5", 'prob': probs['Under_2.5_FT'], 'cat': 'MAIN', 'mc_key': None})
+                potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
+            elif "Złoty Środek" in strategy:
+                potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
+            elif "Wszystkie" in strategy:
+                potential_bets = [
+                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'},
+                    {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'},
+                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'},
+                    {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
+                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
+                ]
+            
+            # --- NOWE STRATEGIE (V24.0) ---
+            elif "Obie strzelą (TAK)" in strategy:
+                potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
+            elif "Obie strzelą (NIE)" in strategy:
+                potential_bets.append({'typ': "BTS NO", 'prob': probs['BTS_No'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} strzeli", 'prob': probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "1 drużyna strzeli (NIE)" in strategy:
+                potential_bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0 - probs['Home_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (TAK)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
+            elif "2 drużyna strzeli (NIE)" in strategy:
+                potential_bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0 - probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
 
-def create_goal_distribution(xg_h, xg_a, h_name, a_name):
-    max_g = 5
-    h_probs = [poisson.pmf(i, xg_h)*100 for i in range(max_g)]
-    a_probs = [poisson.pmf(i, xg_a)*100 for i in range(max_g)]
-    x_labels = [str(i) for i in range(max_g-1)] + ["4+"]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name=h_name, x=x_labels, y=h_probs, marker_color='#00C896'))
-    fig.add_trace(go.Bar(name=a_name, x=x_labels, y=a_probs, marker_color='#FF4B4B'))
-    fig.update_layout(
-        title="Rozkład Goli", barmode='group', xaxis_title="Liczba Goli", yaxis_title="Szansa (%)",
-        height=250, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)'
-    )
-    return fig
+            if potential_bets:
+                best = sorted(potential_bets, key=lambda x: x['prob'], reverse=True)[0]
+                combined_form = f"{form_h} vs {form_a}"
+                if warning: combined_form += f" {warning}"
+                mc_info = ""
+                key = best.get('mc_key')
+                if key and key in mc_stats:
+                    val = mc_stats[key]
+                    if "1" in key or "2" in key:
+                        if val > 80: mc_info = " (MC: 80%+)"
+                        elif val < 50 and best['prob'] > 0.5: mc_info = " (MC: RYZYKO)"
+                    else: mc_info = f" (MC: {int(val)}%)"
+                
+                score_pred = f" ({probs['Exact_Score']})"
+                res.append({
+                    'Mecz': f"{m['Home']} - {m['Away']}", 'Liga': m.get('League', 'N/A'), 'Date': m.get('Date', 'N/A'),
+                    'Typ': best['typ'] + mc_info + score_pred, 'Pewność': best['prob'], 'Kategoria': best.get('cat', 'MAIN'),
+                    'Forma': combined_form, 'Stabilność': chaos_desc, 'xG': f"{xg_h:.2f}:{xg_a:.2f}",
+                    'HomeStats': stats_h, 'AwayStats': stats_a, 'Wynik': probs['Exact_Score'], 'Verdict': verdict
+                })
+        return res
 
-def create_league_scatter(df_league):
-    model = PoissonModel(df_league)
-    teams = []; att = []; defn = []
-    for team, stats in model.team_stats_ft.items():
-        teams.append(team); att.append(stats['att']); defn.append(stats['def'])
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=att, y=defn, mode='markers+text', text=teams, textposition='top center',
-        marker=dict(size=12, color='#00C896', line=dict(width=2, color='DarkSlateGrey'))
-    ))
-    fig.add_vline(x=1.0, line_width=1, line_dash="dash", line_color="grey")
-    fig.add_hline(y=1.0, line_width=1, line_dash="dash", line_color="grey")
-    fig.add_annotation(x=1.5, y=0.5, text="👑 DOMINATORZY", showarrow=False, font=dict(size=14, color="green"))
-    fig.add_annotation(x=0.5, y=1.5, text="💀 DO BICIA", showarrow=False, font=dict(size=14, color="red"))
-    fig.add_annotation(x=1.5, y=1.5, text="🍿 WESOŁY FUTBOL", showarrow=False, font=dict(size=12, color="orange"))
-    fig.add_annotation(x=0.5, y=0.5, text="🧱 MURARZE", showarrow=False, font=dict(size=12, color="blue"))
-    fig.update_layout(
-        title="Mapa Siły Ligowej", xaxis_title="Siła Ataku (>1.0 Dobrze)", yaxis_title="Dziurawość Obrony (>1.0 Źle)",
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'),
-        yaxis=dict(autorange="reversed")
-    )
-    return fig
-
-def get_global_stats(df_all):
-    stats = []
-    leagues = df_all['LeagueName'].unique()
-    for lg in leagues:
-        d = df_all[df_all['LeagueName'] == lg]
-        total = len(d)
-        if total < 10: continue
-        goals = d['FTHG'].sum() + d['FTAG'].sum()
-        avg_goals = goals / total
-        home_wins = len(d[d['FTHG'] > d['FTAG']])
-        draws = len(d[d['FTHG'] == d['FTAG']])
-        away_wins = len(d[d['FTHG'] < d['FTAG']])
-        bts = len(d[(d['FTHG'] > 0) & (d['FTAG'] > 0)])
-        over25 = len(d[(d['FTHG'] + d['FTAG']) > 2.5])
-        stats.append({
-            'Liga': lg, 'Mecze': total, 'Śr. Goli': round(avg_goals, 2),
-            '1 (%)': round((home_wins/total)*100, 1),
-            'X (%)': round((draws/total)*100, 1),
-            '2 (%)': round((away_wins/total)*100, 1),
-            'BTS (%)': round((bts/total)*100, 1),
-            'Over 2.5 (%)': round((over25/total)*100, 1)
-        })
-    return pd.DataFrame(stats)
-
-# --- BUFOROWANIE DANYCH (CACHE) ---
+# --- 7. CACHE (MUSI BYĆ POD KLASAMI) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_and_filter_data(cutoff_date):
-    """Wczytuje dane z SQL i filtruje po dacie. Wynik jest buforowany."""
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT * FROM all_leagues", conn)
         conn.close()
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        # Filtrowanie globalne Chronos
         df = df[df['Date'] >= cutoff_date]
         return df
     except:
@@ -680,30 +770,69 @@ def load_and_filter_data(cutoff_date):
 
 @st.cache_resource(show_spinner=False)
 def get_cached_model(data_hash_key, _df):
-    """Tworzy model Poissona tylko gdy dane się zmienią."""
     if _df.empty: return None
     return PoissonModel(_df)
 
-# --- INIT ---
-# Global variables moved to top for scope safety
+# --- 8. LOGIKA APLIKACJI (BACKTEST, XPTS) ---
+def run_backtest(df, strategy, limit=50):
+    df = df.sort_values(by='Date', ascending=False).head(limit)
+    df = df.sort_values(by='Date', ascending=True)
+    model = PoissonModel(df) 
+    gen = CouponGenerator(model)
+    pool = []
+    for _, row in df.iterrows(): pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
+    generated_tips = gen.analyze_pool(pool, strategy)
+    results = {'Correct': 0, 'Wrong': 0, 'Total': 0}
+    for tip in generated_tips:
+        home, away = tip['Mecz'].split(' - ')
+        match = df[(df['HomeTeam'] == home) & (df['AwayTeam'] == away)]
+        if not match.empty:
+            actual = match.iloc[0]
+            raw_type = tip['Typ'].split('(')[0].strip()
+            is_hit = False
+            try: is_hit = evaluate_bet(raw_type, actual)
+            except: pass
+            if is_hit: results['Correct'] += 1
+            else: results['Wrong'] += 1
+            results['Total'] += 1
+    return results
+
+def calculate_xpts_table(df):
+    model = PoissonModel(df)
+    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
+    table = {t: {'P': 0, 'xPts': 0.0} for t in teams}
+    for _, row in df.iterrows():
+        h, a = row['HomeTeam'], row['AwayTeam']
+        if row['FTHG'] > row['FTAG']: table[h]['P'] += 3
+        elif row['FTHG'] == row['FTAG']: table[h]['P'] += 1; table[a]['P'] += 1
+        else: table[a]['P'] += 3
+        xg_h, xg_a, _, _ = model.predict(h, a)
+        if xg_h:
+            probs = model.calculate_probs(xg_h, xg_a, 0, 0)
+            table[h]['xPts'] += (probs['1']*3 + probs['X']*1)
+            table[a]['xPts'] += (probs['2']*3 + probs['X']*1)
+    df_table = pd.DataFrame.from_dict(table, orient='index').reset_index()
+    df_table.columns = ['Team', 'Pts', 'xPts']
+    df_table['Diff'] = df_table['Pts'] - df_table['xPts']
+    df_table['xPts'] = df_table['xPts'].round(1); df_table['Diff'] = df_table['Diff'].round(1)
+    return df_table.sort_values(by='xPts', ascending=False)
+
+# --- 9. INIT ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = [] 
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
-# --- INTERFEJS ---
-st.title("☁️ MintStats v26.2: Missing Link")
+# --- 10. INTERFEJS UŻYTKOWNIKA ---
+st.title("☁️ MintStats v26.3: Architecture Fix")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
-# --- SUWAK HORYZONTU CZASOWEGO (GLOBALNY) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Ustawienia Modelu")
 years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
-# Obliczamy datę odcięcia RAZ dla całej aplikacji
 cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
 
-# --- SEKCJA BACKUP DLA PODRÓŻNIKÓW ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("💾 Kopia Zapasowa (Praca <-> Dom)")
 
@@ -758,17 +887,14 @@ if mode == "1. 🛠️ ADMIN (Baza Danych)":
         with st.spinner("Przetwarzanie..."):
             count, leagues_found, unknown_codes = process_uploaded_history(uploaded_history)
             if count > 0: 
-                # CLEAR CACHE
                 st.cache_data.clear()
                 st.success(f"✅ Baza zaktualizowana ({count} meczów).")
                 st.info(f"🆕 Wykryte kody lig: {', '.join(map(str, leagues_found))}")
-                
                 if unknown_codes:
                     st.warning(f"⚠️ Kody nierozpoznane (nieznane dla MintStats): {', '.join(map(str, unknown_codes))}")
                     st.caption("ℹ️ Te ligi zostały wgrane, ale będą widoczne pod surowym kodem (np. 'X1') zamiast pełnej nazwy.")
             else: st.error("Błąd importu. Sprawdź komunikaty powyżej.")
     
-    # --- AUDYTOR BAZY DANYCH (NOWY PANEL) ---
     st.divider()
     st.markdown("### 🔍 Status Bazy Danych (Audytor)")
     db_status = get_db_status()
@@ -782,14 +908,12 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     leagues = get_leagues_list()
     if not leagues: st.error("⛔ Baza pusta!"); st.stop()
     
-    # --- TURBO CACHING ---
     df_all = load_and_filter_data(cutoff_date)
     
     if df_all.empty:
         st.warning("Brak danych po filtrowaniu (zmień horyzont czasowy lub wgraj nowsze pliki).")
         st.stop()
 
-    # Using cache_resource because model is an object
     model = get_cached_model(str(df_all.shape), df_all)
     if not model: st.stop()
     
@@ -803,9 +927,7 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     new_items = []
     with tab_manual:
         sel_league = st.selectbox("Liga:", leagues)
-        # Filter league data as well using the cached DF
         df_l = df_all[df_all['LeagueName'] == sel_league]
-        
         teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
         with st.form("manual_add"):
             col_date, col_h, col_a = st.columns([1,2,2])
@@ -863,7 +985,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
     with st.expander("📊 Mapa Siły Ligowej (Scatter Plot)", expanded=False):
         sel_scatter_league = st.selectbox("Wybierz Ligę do Analizy:", leagues, key="scatter_league")
         df_scatter = df_all[df_all['LeagueName'] == sel_scatter_league]
-        
         if not df_scatter.empty:
             fig_scatter = create_league_scatter(df_scatter)
             st.plotly_chart(fig_scatter, use_container_width=True)
@@ -925,7 +1046,6 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
         selected_dates = st.multiselect("📅 Wybierz daty meczów do analizy:", available_dates, default=available_dates)
 
         if st.button("🚀 GENERUJ", type="primary"):
-            # Filter pool by dates
             filtered_pool = [m for m in st.session_state.fixture_pool if m['Date'] in selected_dates]
             
             if not filtered_pool:
@@ -1039,7 +1159,6 @@ elif mode == "4. 🧪 LABORATORIUM":
         
         if st.button("🔥 Uruchom Test"):
             df = get_data_for_league(sel_lg)
-            # Apply Chronos filter to Backtest too
             df = df[df['Date'] >= cutoff_date]
             
             if df.empty: st.error("Brak danych!")
