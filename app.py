@@ -17,12 +17,12 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v28.1 Restoration", layout="wide", page_icon="🧬")
+st.set_page_config(page_title="MintStats v28.2 Full Fix", layout="wide", page_icon="🚑")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
 # ==============================================================================
-# 🔑 TWOJE KLUCZE (Już wpisane na podstawie screenów)
+# 🔑 TWOJE KLUCZE CHMURY
 # ==============================================================================
 JSONBIN_API_KEY = "$2a$10$emn.LOTwDQ2d/ibHmOxcY.Ogunk18boKpW6ubGj/.fG6kyH44ClFi"
 JSONBIN_BIN_ID  = "6968d66c43b1c97be9323f01"
@@ -66,7 +66,6 @@ LEAGUE_NAMES = {
 
 # --- 4. FUNKCJE CLOUD SYNC (JSONBIN) ---
 def get_cloud_blacklist():
-    """Pobiera listę zagranych meczów z chmury."""
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
     headers = {"X-Master-Key": JSONBIN_API_KEY}
     try:
@@ -78,20 +77,15 @@ def get_cloud_blacklist():
     return set()
 
 def update_cloud_blacklist(new_matches):
-    """Wysyła nowe mecze do chmury (dodaje do istniejących)."""
     current_list = get_cloud_blacklist()
     updated_list = list(current_list.union(set(new_matches)))
-    
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Master-Key": JSONBIN_API_KEY
-    }
+    headers = {"Content-Type": "application/json", "X-Master-Key": JSONBIN_API_KEY}
     payload = {"matches": updated_list, "last_updated": str(datetime.now())}
     try: requests.put(url, json=payload, headers=headers)
     except: pass
 
-# --- FUNKCJE POMOCNICZE BAZY DANYCH ---
+# --- FUNKCJE POMOCNICZE BAZY DANYCH (NAPRAWIONE) ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db"); cursor = conn.cursor()
@@ -100,6 +94,24 @@ def get_leagues_list():
         df = pd.read_sql("SELECT DISTINCT LeagueName FROM all_leagues ORDER BY LeagueName", conn)
         conn.close(); return df['LeagueName'].tolist()
     except: return []
+
+def get_all_data():
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues", conn)
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        conn.close()
+        return df
+    except: return pd.DataFrame()
+
+def get_data_for_league(league_name):
+    try:
+        conn = sqlite3.connect("mintstats.db")
+        df = pd.read_sql("SELECT * FROM all_leagues WHERE LeagueName = ?", conn, params=(league_name,))
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        conn.close()
+        return df
+    except: return pd.DataFrame()
 
 def load_fixture_pool():
     if os.path.exists(FIXTURES_DB_FILE):
@@ -220,7 +232,6 @@ def download_and_update_db(league_codes):
     if all_dfs:
         final = pd.concat(all_dfs, ignore_index=True)
         conn = sqlite3.connect("mintstats.db")
-        # Zachowaj historię
         try:
             old = pd.read_sql("SELECT * FROM all_leagues", conn)
             old['Date'] = pd.to_datetime(old['Date'])
@@ -337,6 +348,7 @@ class PoissonModel:
         xg_a = a_att * h_def * self.league_avg_ft
         return xg_h, xg_a
 
+# --- COUPON GENERATOR (PRZYWRÓCONE WSZYSTKIE STRATEGIE) ---
 class CouponGenerator:
     def __init__(self, model): self.model = model
     
@@ -344,7 +356,6 @@ class CouponGenerator:
         res = []
         for m in pool:
             match_id = f"{m['Home']} - {m['Away']}"
-            # --- AUTO FILTER: SKIP IF IN CLOUD BLACKLIST ---
             if match_id in used_matches_set: continue 
             
             xg_h, xg_a = self.model.predict(m['Home'], m['Away'])
@@ -357,37 +368,80 @@ class CouponGenerator:
             p_1 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i>j)
             p_x = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i==j)
             p_2 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i<j)
-            p_bts = sum(h_probs[i]*a_probs[j] for i in range(1,6) for j in range(1,6))
+            
+            p_bts_yes = sum(h_probs[i]*a_probs[j] for i in range(1,6) for j in range(1,6))
+            p_bts_no = 1.0 - p_bts_yes
+            
+            p_o15 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j > 1.5)
             p_o25 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j > 2.5)
-            p_u35 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j < 3.5)
+            p_o05 = 1.0 - (h_probs[0]*a_probs[0])
+            
+            p_u25 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j <= 2.5)
+            p_u35 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j <= 3.5)
+            p_u45 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i+j <= 4.5)
+            
+            p_home_yes = 1.0 - h_probs[0]
+            p_away_yes = 1.0 - a_probs[0]
             
             # Handicaps & DNB
             p_h_handi = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i >= j+2)
+            p_a_handi = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if j >= i+2)
+            p_h_plus = 1.0 - p_a_handi
             p_a_plus = 1.0 - p_h_handi
+            
             p_dnb_h = p_1 / (p_1 + p_2) if (p_1+p_2) > 0 else 0
             p_dnb_a = p_2 / (p_1 + p_2) if (p_1+p_2) > 0 else 0
             
+            # --- LOGIKA STRATEGII (PEŁNA LISTA) ---
             bets = []
-            if "Mix" in strategy:
-                bets.append({'typ': "1X", 'prob': p_1+p_x})
-                bets.append({'typ': "X2", 'prob': p_2+p_x})
-                bets.append({'typ': "Over 1.5", 'prob': 1.0 - (h_probs[0]*a_probs[0] + h_probs[1]*a_probs[0] + h_probs[0]*a_probs[1])})
-            elif "Gole" in strategy:
-                bets.append({'typ': "BTS", 'prob': p_bts})
-                bets.append({'typ': "Over 2.5", 'prob': p_o25})
-            elif "Twierdza" in strategy: bets.append({'typ': "1", 'prob': p_1})
-            elif "Mur" in strategy: bets.append({'typ': "Under 3.5", 'prob': p_u35})
-            elif "Handicap" in strategy: bets.append({'typ': "Home -1.5", 'prob': p_h_handi})
-            elif "DNB" in strategy: 
-                bets.append({'typ': "DNB 1", 'prob': p_dnb_h})
-                bets.append({'typ': "DNB 2", 'prob': p_dnb_a})
-            else: # Fallback for single types
-                if "1X" in strategy: bets.append({'typ': "1X", 'prob': p_1+p_x})
-                elif "Over" in strategy: bets.append({'typ': "Over 2.5", 'prob': p_o25})
+            if "Mix Bezpieczny" in strategy:
+                bets.append({'typ': "1X", 'prob': p_1+p_x, 'cat': 'DC'})
+                bets.append({'typ': "X2", 'prob': p_2+p_x, 'cat': 'DC'})
+                bets.append({'typ': "Under 4.5", 'prob': p_u45, 'cat': 'U/O'})
+                bets.append({'typ': "Over 0.5", 'prob': p_o05, 'cat': 'U/O'})
+                bets.append({'typ': f"{m['Home']} strzeli", 'prob': p_home_yes, 'cat': 'TEAM'})
+            elif "Podwójna Szansa" in strategy:
+                bets.append({'typ': "1X", 'prob': p_1+p_x, 'cat': 'MAIN'})
+                bets.append({'typ': "X2", 'prob': p_2+p_x, 'cat': 'MAIN'})
+                bets.append({'typ': "12", 'prob': p_1+p_2, 'cat': 'MAIN'})
+            elif "Gole Agresywne" in strategy:
+                bets.append({'typ': "BTS", 'prob': p_bts_yes, 'cat': 'MAIN'})
+                bets.append({'typ': "Over 2.5", 'prob': p_o25, 'cat': 'MAIN'})
+            elif "Do Przerwy" in strategy:
+                # Aproksymacja HT (ok. 45% goli pada w 1. połowie)
+                xg_h_ht, xg_a_ht = xg_h * 0.45, xg_a * 0.45
+                p_ht_o15 = 1.0 - (poisson.pmf(0, xg_h_ht+xg_a_ht) + poisson.pmf(1, xg_h_ht+xg_a_ht))
+                bets.append({'typ': "HT Over 1.5", 'prob': p_ht_o15, 'cat': 'MAIN'})
+            elif "Twierdza" in strategy:
+                bets.append({'typ': f"Win {m['Home']}", 'prob': p_1, 'cat': 'MAIN'})
+            elif "Mur Obronny" in strategy:
+                bets.append({'typ': "Under 2.5", 'prob': p_u25, 'cat': 'MAIN'})
+                bets.append({'typ': "Under 3.5", 'prob': p_u35, 'cat': 'MAIN'})
+            elif "Złoty Środek" in strategy:
+                bets.append({'typ': "Over 1.5", 'prob': p_o15, 'cat': 'MAIN'})
             
+            # Strzeleckie
+            elif "Obie strzelą (TAK)" in strategy: bets.append({'typ': "BTS", 'prob': p_bts_yes})
+            elif "Obie strzelą (NIE)" in strategy: bets.append({'typ': "BTS NO", 'prob': p_bts_no})
+            elif "1 drużyna strzeli (TAK)" in strategy: bets.append({'typ': f"{m['Home']} strzeli", 'prob': p_home_yes})
+            elif "1 drużyna strzeli (NIE)" in strategy: bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0-p_home_yes})
+            elif "2 drużyna strzeli (TAK)" in strategy: bets.append({'typ': f"{m['Away']} strzeli", 'prob': p_away_yes})
+            elif "2 drużyna strzeli (NIE)" in strategy: bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0-p_away_yes})
+            
+            # Handicapy
+            elif "Handicap: Dominacja Faworyta" in strategy:
+                bets.append({'typ': f"{m['Home']} (-1.5)", 'prob': p_h_handi})
+                bets.append({'typ': f"{m['Away']} (-1.5)", 'prob': p_a_handi})
+            elif "Handicap: Tarcza Underdoga" in strategy:
+                bets.append({'typ': f"{m['Home']} (+1.5)", 'prob': p_h_plus})
+                bets.append({'typ': f"{m['Away']} (+1.5)", 'prob': p_a_plus})
+            
+            # DNB
+            elif "DNB: Gospodarz" in strategy: bets.append({'typ': f"DNB {m['Home']}", 'prob': p_dnb_h})
+            elif "DNB: Gość" in strategy: bets.append({'typ': f"DNB {m['Away']}", 'prob': p_dnb_a})
+
             if bets:
                 best = sorted(bets, key=lambda x: x['prob'], reverse=True)[0]
-                # Chaos Factor
                 chaos_mod = self.model.team_chaos[m['Home']]['factor'] * self.model.team_chaos[m['Away']]['factor']
                 
                 res.append({
@@ -407,7 +461,6 @@ def run_backtest(df, strategy, limit=50):
     gen = CouponGenerator(model)
     pool = []
     for _, row in df.iterrows(): pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
-    # Pass empty set to ignore blacklist in backtest
     generated_tips = gen.analyze_pool(pool, strategy, set())
     results = {'Correct': 0, 'Wrong': 0, 'Total': 0}
     for tip in generated_tips:
@@ -415,16 +468,18 @@ def run_backtest(df, strategy, limit=50):
         match = df[(df['HomeTeam'] == home) & (df['AwayTeam'] == away)]
         if not match.empty:
             actual = match.iloc[0]
-            # Simple eval
             hit = False
             fthg, ftag = actual['FTHG'], actual['FTAG']
             typ = tip['Typ']
-            if "1" in typ and fthg > ftag: hit = True
-            elif "2" in typ and ftag > fthg: hit = True
-            elif "X" in typ and fthg == ftag: hit = True
-            elif "Over" in typ and (fthg+ftag) > 2.5: hit = True
-            elif "Under" in typ and (fthg+ftag) < 3.5: hit = True
-            elif "BTS" in typ and fthg>0 and ftag>0: hit = True
+            # Uproszczona ewaluacja dla backtestu
+            if "1" in typ and "X" not in typ and "DNB" not in typ and fthg > ftag: hit = True
+            elif "2" in typ and "X" not in typ and "DNB" not in typ and ftag > fthg: hit = True
+            elif "X" in typ and "1" not in typ and "2" not in typ and fthg == ftag: hit = True
+            elif "1X" in typ and fthg >= ftag: hit = True
+            elif "X2" in typ and ftag >= fthg: hit = True
+            elif "Over 2.5" in typ and (fthg+ftag) > 2.5: hit = True
+            elif "Under 3.5" in typ and (fthg+ftag) < 3.5: hit = True
+            elif "BTS" in typ and "NO" not in typ and fthg>0 and ftag>0: hit = True
             
             if hit: results['Correct'] += 1
             else: results['Wrong'] += 1
@@ -447,7 +502,6 @@ def calculate_xpts_table(df):
             p_1 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i>j)
             p_x = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i==j)
             p_2 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i<j)
-            
             table[h]['xPts'] += (p_1*3 + p_x*1)
             table[a]['xPts'] += (p_2*3 + p_x*1)
             
@@ -472,9 +526,8 @@ def get_model(hash_key, df): return PoissonModel(df) if not df.empty else None
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = []
 
-st.title("☁️ MintStats v28.1: Restoration")
+st.title("☁️ MintStats v28.2: Full Fix")
 st.sidebar.header("Panel Sterowania")
-# ADDED LABORIUM BACK
 mode = st.sidebar.radio("Moduł:", ["1. 🛠️ ADMIN", "2. 🚀 GENERATOR", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
 cutoff = pd.to_datetime('today') - pd.DateOffset(years=1)
@@ -493,12 +546,9 @@ if mode == "1. 🛠️ ADMIN":
             c, l, _ = process_uploaded_history(uploaded); st.success(f"Dodano {c} meczów.")
             st.cache_data.clear(); st.cache_resource.clear()
 
-    if "TU_WKLEJ" in JSONBIN_API_KEY:
-        st.error("⚠️ NIE SKONFIGUROWANO CHMURY! Edytuj plik app.py i wklej klucze.")
-    else:
-        st.success("✅ Połączono z chmurą (JSONBin).")
+    if "TU_WKLEJ" in JSONBIN_API_KEY: st.error("⚠️ Brak kluczy API!")
+    else: st.success("✅ Połączono z chmurą (JSONBin).")
     
-    # RESTORED DB STATUS TABLE
     st.divider()
     st.markdown("### 🔍 Status Bazy Danych")
     db_stat = get_db_status()
@@ -531,7 +581,14 @@ elif mode == "2. 🚀 GENERATOR":
         strat_mode = st.radio("Tryb:", ["Pojedyncza", "Mix"], horizontal=True)
         gen_settings = {}
         if strat_mode == "Pojedyncza":
-            gen_settings['strat'] = st.selectbox("Strategia", ["Mix Bezpieczny", "Gole Agresywne", "Twierdza", "Mur Obronny", "Handicap", "DNB"])
+            gen_settings['strat'] = st.selectbox("Strategia", [
+                "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", "Podwójna Szansa (1X, X2, 12)",
+                "Gole Agresywne (BTS, O2.5)", "Do Przerwy (HT O1.5)", "Twierdza (Home Win)",
+                "Mur Obronny (Under 2.5/3.5)", "Złoty Środek (Over 1.5)", "Obie strzelą (TAK)",
+                "Obie strzelą (NIE)", "1 drużyna strzeli (TAK)", "1 drużyna strzeli (NIE)",
+                "2 drużyna strzeli (TAK)", "2 drużyna strzeli (NIE)", "Handicap: Dominacja Faworyta (-1.5)",
+                "Handicap: Tarcza Underdoga (+1.5)", "DNB: Gospodarz", "DNB: Gość"
+            ])
             gen_settings['count'] = st.slider("Ile meczów?", 1, 10, 5)
         else:
             c1,c2 = st.columns(2)
@@ -587,7 +644,6 @@ elif mode == "3. 📜 MOJE KUPONY":
         with st.expander(c['name']):
             st.dataframe(pd.DataFrame(c['data']))
 
-# RESTORED LAB MODULE
 elif mode == "4. 🧪 LABORATORIUM":
     st.title("🧪 Laboratorium Analityczne")
     tab1, tab2 = st.tabs(["🔙 Backtest", "⚖️ xPoints"])
@@ -595,6 +651,7 @@ elif mode == "4. 🧪 LABORATORIUM":
     with tab1:
         st.subheader("Test skuteczności")
         leagues = get_leagues_list()
+        if not leagues: st.error("Brak danych."); st.stop()
         sel_lg = st.selectbox("Liga:", leagues)
         strat = st.selectbox("Strategia:", ["Mix Bezpieczny", "Gole Agresywne", "Twierdza", "Mur Obronny"])
         limit = st.slider("Mecze:", 20, 200, 50)
