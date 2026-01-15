@@ -17,12 +17,12 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v28.0 Cloud Sync", layout="wide", page_icon="☁️")
+st.set_page_config(page_title="MintStats v28.1 Restoration", layout="wide", page_icon="🧬")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
 # ==============================================================================
-# 🔑 KLUCZE DO CHMURY (JUŻ WPISANE)
+# 🔑 TWOJE KLUCZE (Już wpisane na podstawie screenów)
 # ==============================================================================
 JSONBIN_API_KEY = "$2a$10$emn.LOTwDQ2d/ibHmOxcY.Ogunk18boKpW6ubGj/.fG6kyH44ClFi"
 JSONBIN_BIN_ID  = "6968d66c43b1c97be9323f01"
@@ -236,6 +236,7 @@ def get_db_status():
     try:
         conn = sqlite3.connect("mintstats.db")
         df = pd.read_sql("SELECT LeagueName as Liga, COUNT(*) as Mecze, MAX(Date) as Ostatni_Mecz FROM all_leagues GROUP BY LeagueName ORDER BY Ostatni_Mecz DESC", conn)
+        df['Ostatni_Mecz'] = pd.to_datetime(df['Ostatni_Mecz']).dt.strftime('%Y-%m-%d')
         conn.close()
         return df
     except: return pd.DataFrame()
@@ -398,7 +399,65 @@ class CouponGenerator:
                 })
         return res
 
-# --- 7. CACHE ---
+# --- 7. LOGIKA LAB (BACKTEST) ---
+def run_backtest(df, strategy, limit=50):
+    df = df.sort_values(by='Date', ascending=False).head(limit)
+    df = df.sort_values(by='Date', ascending=True)
+    model = PoissonModel(df) 
+    gen = CouponGenerator(model)
+    pool = []
+    for _, row in df.iterrows(): pool.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': 'Test', 'Date': row['Date']})
+    # Pass empty set to ignore blacklist in backtest
+    generated_tips = gen.analyze_pool(pool, strategy, set())
+    results = {'Correct': 0, 'Wrong': 0, 'Total': 0}
+    for tip in generated_tips:
+        home, away = tip['Mecz'].split(' - ')
+        match = df[(df['HomeTeam'] == home) & (df['AwayTeam'] == away)]
+        if not match.empty:
+            actual = match.iloc[0]
+            # Simple eval
+            hit = False
+            fthg, ftag = actual['FTHG'], actual['FTAG']
+            typ = tip['Typ']
+            if "1" in typ and fthg > ftag: hit = True
+            elif "2" in typ and ftag > fthg: hit = True
+            elif "X" in typ and fthg == ftag: hit = True
+            elif "Over" in typ and (fthg+ftag) > 2.5: hit = True
+            elif "Under" in typ and (fthg+ftag) < 3.5: hit = True
+            elif "BTS" in typ and fthg>0 and ftag>0: hit = True
+            
+            if hit: results['Correct'] += 1
+            else: results['Wrong'] += 1
+            results['Total'] += 1
+    return results
+
+def calculate_xpts_table(df):
+    model = PoissonModel(df)
+    teams = pd.concat([df['HomeTeam'], df['AwayTeam']]).unique()
+    table = {t: {'P': 0, 'xPts': 0.0} for t in teams}
+    for _, row in df.iterrows():
+        h, a = row['HomeTeam'], row['AwayTeam']
+        if row['FTHG'] > row['FTAG']: table[h]['P'] += 3
+        elif row['FTHG'] == row['FTAG']: table[h]['P'] += 1; table[a]['P'] += 1
+        else: table[a]['P'] += 3
+        xg_h, xg_a = model.predict(h, a)
+        if xg_h:
+            h_probs = [poisson.pmf(i, xg_h) for i in range(6)]
+            a_probs = [poisson.pmf(i, xg_a) for i in range(6)]
+            p_1 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i>j)
+            p_x = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i==j)
+            p_2 = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i<j)
+            
+            table[h]['xPts'] += (p_1*3 + p_x*1)
+            table[a]['xPts'] += (p_2*3 + p_x*1)
+            
+    df_table = pd.DataFrame.from_dict(table, orient='index').reset_index()
+    df_table.columns = ['Team', 'Pts', 'xPts']
+    df_table['Diff'] = df_table['Pts'] - df_table['xPts']
+    df_table['xPts'] = df_table['xPts'].round(1); df_table['Diff'] = df_table['Diff'].round(1)
+    return df_table.sort_values(by='xPts', ascending=False)
+
+# --- 8. CACHE ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data_cached(cutoff):
     try:
@@ -409,15 +468,16 @@ def load_data_cached(cutoff):
 @st.cache_resource(show_spinner=False)
 def get_model(hash_key, df): return PoissonModel(df) if not df.empty else None
 
-# --- 8. UI ---
+# --- 9. UI ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = []
 
-st.title("☁️ MintStats v28.0: Cloud Sync")
+st.title("☁️ MintStats v28.1: Restoration")
 st.sidebar.header("Panel Sterowania")
-mode = st.sidebar.radio("Moduł:", ["1. 🛠️ ADMIN", "2. 🚀 GENERATOR", "3. 📜 MOJE KUPONY"])
+# ADDED LABORIUM BACK
+mode = st.sidebar.radio("Moduł:", ["1. 🛠️ ADMIN", "2. 🚀 GENERATOR", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
-cutoff = pd.to_datetime('today') - pd.DateOffset(years=1) # 1 rok wstecz
+cutoff = pd.to_datetime('today') - pd.DateOffset(years=1)
 
 if mode == "1. 🛠️ ADMIN":
     st.subheader("Baza Danych")
@@ -437,13 +497,19 @@ if mode == "1. 🛠️ ADMIN":
         st.error("⚠️ NIE SKONFIGUROWANO CHMURY! Edytuj plik app.py i wklej klucze.")
     else:
         st.success("✅ Połączono z chmurą (JSONBin).")
+    
+    # RESTORED DB STATUS TABLE
+    st.divider()
+    st.markdown("### 🔍 Status Bazy Danych")
+    db_stat = get_db_status()
+    if not db_stat.empty: st.dataframe(db_stat, use_container_width=True)
+    else: st.info("Baza pusta.")
 
 elif mode == "2. 🚀 GENERATOR":
     df_all = load_data_cached(cutoff)
     if df_all.empty: st.warning("Brak danych."); st.stop()
     model = get_model(str(df_all.shape), df_all)
     
-    # --- FIXTURE INPUT ---
     with st.expander("Dodaj Mecze", expanded=True):
         raw = st.text_area("Wklej mecze z Flashscore:")
         if st.button("Dodaj"):
@@ -462,7 +528,6 @@ elif mode == "2. 🚀 GENERATOR":
         st.divider()
         st.subheader("Generowanie")
         
-        # Strategies
         strat_mode = st.radio("Tryb:", ["Pojedyncza", "Mix"], horizontal=True)
         gen_settings = {}
         if strat_mode == "Pojedyncza":
@@ -478,10 +543,8 @@ elif mode == "2. 🚀 GENERATOR":
             }
 
         if st.button("🚀 GENERUJ (Automatyczny zapis użycia)", type="primary"):
-            # 1. Pobierz aktualną czarną listę z chmury
             cloud_blacklist = get_cloud_blacklist()
             gen = CouponGenerator(model)
-            
             final_coupon = []
             
             if strat_mode == "Pojedyncza":
@@ -493,7 +556,6 @@ elif mode == "2. 🚀 GENERATOR":
                     if cnt > 0:
                         cand = gen.analyze_pool(st.session_state.fixture_pool, s, cloud_blacklist)
                         cand.sort(key=lambda x: x['Pewność'], reverse=True)
-                        # Unikaj duplikatów na tym samym kuponie
                         for c in cand:
                             if c['Mecz'] not in [x['Mecz'] for x in final_coupon]:
                                 final_coupon.append(c)
@@ -501,21 +563,16 @@ elif mode == "2. 🚀 GENERATOR":
             
             if final_coupon:
                 st.session_state.generated_coupons = [{'name': "Auto-Kupon", 'data': final_coupon}]
-                
-                # --- AUTO SYNC TO CLOUD ---
                 matches_to_block = [x['Mecz'] for x in final_coupon]
                 update_cloud_blacklist(matches_to_block)
-                st.toast(f"☁️ Zapisano {len(matches_to_block)} meczów w chmurze jako wykorzystane.")
-                
+                st.toast(f"☁️ Zapisano {len(matches_to_block)} meczów w chmurze.")
             else: st.warning("Brak typów (lub wszystkie mecze już wykorzystane).")
 
-        # Display Result
         if st.session_state.generated_coupons:
             for c in st.session_state.generated_coupons:
                 st.write("---")
                 df_res = pd.DataFrame(c['data'])
                 st.dataframe(df_res[['Mecz', 'Typ', 'Pewność', 'xG']].style.format({'Pewność': '{:.1%}'}), use_container_width=True)
-                
                 with st.expander("Szczegóły"):
                     for _, row in df_res.iterrows():
                         st.write(f"**{row['Mecz']}**")
@@ -529,3 +586,37 @@ elif mode == "3. 📜 MOJE KUPONY":
     for c in reversed(coupons):
         with st.expander(c['name']):
             st.dataframe(pd.DataFrame(c['data']))
+
+# RESTORED LAB MODULE
+elif mode == "4. 🧪 LABORATORIUM":
+    st.title("🧪 Laboratorium Analityczne")
+    tab1, tab2 = st.tabs(["🔙 Backtest", "⚖️ xPoints"])
+    
+    with tab1:
+        st.subheader("Test skuteczności")
+        leagues = get_leagues_list()
+        sel_lg = st.selectbox("Liga:", leagues)
+        strat = st.selectbox("Strategia:", ["Mix Bezpieczny", "Gole Agresywne", "Twierdza", "Mur Obronny"])
+        limit = st.slider("Mecze:", 20, 200, 50)
+        
+        if st.button("Uruchom"):
+            df = get_data_for_league(sel_lg)
+            df = df[df['Date'] >= cutoff]
+            if df.empty: st.error("Brak danych.")
+            else:
+                with st.spinner("Liczenie..."):
+                    res = run_backtest(df, strat, limit)
+                    col1, col2 = st.columns(2)
+                    acc = (res['Correct']/res['Total'])*100 if res['Total']>0 else 0
+                    col1.metric("Skuteczność", f"{acc:.1f}%")
+                    col2.metric("Trafione", f"{res['Correct']}/{res['Total']}")
+    
+    with tab2:
+        st.subheader("Tabela Sprawiedliwości")
+        leagues = get_leagues_list()
+        sel_xp_lg = st.selectbox("Liga:", leagues, key="xp")
+        if sel_xp_lg:
+            df = get_data_for_league(sel_xp_lg)
+            df = df[df['Date'] >= cutoff]
+            if not df.empty:
+                st.dataframe(calculate_xpts_table(df).style.format({'xPts':'{:.1f}'}), use_container_width=True)
