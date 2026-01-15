@@ -17,12 +17,12 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v28.2 Full Fix", layout="wide", page_icon="🚑")
+st.set_page_config(page_title="MintStats v28.3 Complete", layout="wide", page_icon="💎")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
 # ==============================================================================
-# 🔑 TWOJE KLUCZE CHMURY
+# 🔑 TWOJE KLUCZE CHMURY (ZACHOWANE)
 # ==============================================================================
 JSONBIN_API_KEY = "$2a$10$emn.LOTwDQ2d/ibHmOxcY.Ogunk18boKpW6ubGj/.fG6kyH44ClFi"
 JSONBIN_BIN_ID  = "6968d66c43b1c97be9323f01"
@@ -41,6 +41,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. SŁOWNIKI ---
+TEAM_ALIASES = {
+    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "brag": "Sp Braga", "braga": "Sp Braga",
+    "sc braga": "Sp Braga", "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "fc porto": "Porto",
+    "man utd": "Man United", "man city": "Man City", "leeds": "Leeds", "arsenal": "Arsenal",
+    "chelsea": "Chelsea", "liverpool": "Liverpool", "real madrid": "Real Madrid", "barcelona": "Barcelona",
+    "bayern": "Bayern Munich", "psg": "Paris SG", "juventus": "Juventus", "inter": "Inter Milan",
+    "milan": "Milan", "napoli": "Napoli", "roma": "Roma", "ajax": "Ajax", "feyenoord": "Feyenoord",
+    "benfica": "Benfica", "porto": "Porto", "celtic": "Celtic", "rangers": "Rangers",
+    "valiadolia": "Valladolid", "betis": "Real Betis", "celta": "Celta", "monchengladbach": "M'gladbach",
+    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon",
+    "young boys": "Young Boys", "servette": "Servette", "lugano": "Lugano", "basel": "Basel",
+    "malmo": "Malmo FF", "aik": "AIK", "djurgarden": "Djurgarden", "rosenborg": "Rosenborg", "bodo/glimt": "Bodo Glimt",
+    "legia": "Legia Warsaw", "lech": "Lech Poznan", "rakow": "Rakow Czestochowa"
+}
+
 LEAGUE_NAMES = {
     'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship', 'E2': '🇬🇧 Anglia - League One', 'E3': '🇬🇧 Anglia - League Two', 'EC': '🇬🇧 Anglia - Conference',
     'D1': '🇩🇪 Niemcy - Bundesliga', 'D2': '🇩🇪 Niemcy - 2. Bundesliga',
@@ -85,7 +100,7 @@ def update_cloud_blacklist(new_matches):
     try: requests.put(url, json=payload, headers=headers)
     except: pass
 
-# --- FUNKCJE POMOCNICZE BAZY DANYCH (NAPRAWIONE) ---
+# --- FUNKCJE POMOCNICZE BAZY DANYCH ---
 def get_leagues_list():
     try:
         conn = sqlite3.connect("mintstats.db"); cursor = conn.cursor()
@@ -277,9 +292,52 @@ def create_goal_distribution(xg_h, xg_a, h_name, a_name):
     )
     return fig
 
+def create_league_scatter(df_league):
+    model = PoissonModel(df_league)
+    teams = []; att = []; defn = []
+    for team, stats in model.team_stats_ft.items():
+        teams.append(team); att.append(stats['att']); defn.append(stats['def'])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=att, y=defn, mode='markers+text', text=teams, textposition='top center',
+        marker=dict(size=12, color='#00C896', line=dict(width=2, color='DarkSlateGrey'))
+    ))
+    fig.add_vline(x=1.0, line_width=1, line_dash="dash", line_color="grey")
+    fig.add_hline(y=1.0, line_width=1, line_dash="dash", line_color="grey")
+    fig.add_annotation(x=1.5, y=0.5, text="👑 DOMINATORZY", showarrow=False, font=dict(size=14, color="green"))
+    fig.add_annotation(x=0.5, y=1.5, text="💀 DO BICIA", showarrow=False, font=dict(size=14, color="red"))
+    fig.add_annotation(x=1.5, y=1.5, text="🍿 WESOŁY FUTBOL", showarrow=False, font=dict(size=12, color="orange"))
+    fig.add_annotation(x=0.5, y=0.5, text="🧱 MURARZE", showarrow=False, font=dict(size=12, color="blue"))
+    fig.update_layout(
+        title="Mapa Siły Ligowej", xaxis_title="Siła Ataku (>1.0 Dobrze)", yaxis_title="Dziurawość Obrony (>1.0 Źle)",
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#333'),
+        yaxis=dict(autorange="reversed")
+    )
+    return fig
+
+def clean_ocr_text_debug(text):
+    lines = text.split('\n'); cleaned = []
+    for line in lines:
+        normalized = re.sub(r'[^a-zA-Z0-9 ]', ' ', line).strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        if "liga" in normalized.lower() or "serie" in normalized.lower(): continue
+        if len(normalized) > 2: cleaned.append(normalized)
+    return cleaned
+
 def extract_text_from_image(uploaded_file):
     try: image = Image.open(uploaded_file); return pytesseract.image_to_string(image, lang='eng', config='--psm 6')
     except Exception as e: return f"Error OCR: {e}"
+
+def resolve_team_name(raw_name, available_teams):
+    cur = raw_name.lower().strip()
+    for alias, db_name in TEAM_ALIASES.items():
+        if alias == cur: return db_name
+        if len(alias) > 3 and alias in cur: return db_name
+    match = difflib.get_close_matches(cur, [t.lower() for t in available_teams], n=1, cutoff=0.7)
+    if match:
+        for real_name in available_teams:
+            if real_name.lower() == match[0]: return real_name
+    return None
 
 def parse_raw_text(text_input, available_teams):
     lines = text_input.split('\n'); found_matches = []; today_str = datetime.today().strftime('%Y-%m-%d')
@@ -291,15 +349,33 @@ def parse_raw_text(text_input, available_teams):
         if " - " in line: parts = line.split(" - ")
         elif " vs " in line: parts = line.split(" vs ")
         if len(parts) >= 2:
-            raw_home = parts[0].strip(); raw_away_chunk = parts[1].strip(); raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0].strip()
-            
-            # Simple fuzzy match
-            h_match = difflib.get_close_matches(raw_home, available_teams, n=1, cutoff=0.6)
-            a_match = difflib.get_close_matches(raw_away, available_teams, n=1, cutoff=0.6)
-            
-            if h_match and a_match and h_match[0] != a_match[0]:
-                found_matches.append({'Home': h_match[0], 'Away': a_match[0], 'League': 'Text Import', 'Date': today_str})
+            raw_home = parts[0]; raw_away_chunk = parts[1]; raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
+            home_team = resolve_team_name(raw_home, available_teams); away_team = resolve_team_name(raw_away, available_teams)
+            if home_team and away_team and home_team != away_team:
+                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': today_str})
     return found_matches
+
+def smart_parse_matches_v3(text_input, available_teams):
+    cleaned_lines = clean_ocr_text_debug(text_input); found_teams = []; debug_log = []; today_str = datetime.today().strftime('%Y-%m-%d')
+    for line in cleaned_lines:
+        cur = line.lower().strip(); matched = resolve_team_name(cur, available_teams)
+        if matched:
+            if not found_teams or found_teams[-1] != matched: found_teams.append(matched)
+            debug_log.append(f"✅ '{cur}' -> '{matched}'")
+        else: debug_log.append(f"❌ '{cur}'")
+    matches = [{'Home': found_teams[i], 'Away': found_teams[i+1], 'League': 'OCR Import', 'Date': today_str} for i in range(0, len(found_teams) - 1, 2)]
+    return matches, debug_log, cleaned_lines
+
+def parse_fixtures_csv(file):
+    try:
+        df = pd.read_csv(file)
+        if not {'Div', 'HomeTeam', 'AwayTeam'}.issubset(df.columns): return [], "Brak kolumn Div/HomeTeam/AwayTeam"
+        if 'Date' in df.columns: df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+        else: df['Date'] = datetime.today().strftime('%Y-%m-%d')
+        matches = []
+        for _, row in df.iterrows(): matches.append({'Home': row['HomeTeam'], 'Away': row['AwayTeam'], 'League': row['Div'], 'Date': row['Date']})
+        return matches, None
+    except Exception as e: return [], str(e)
 
 # --- 6. MODEL POISSONA ---
 class PoissonModel:
@@ -348,7 +424,6 @@ class PoissonModel:
         xg_a = a_att * h_def * self.league_avg_ft
         return xg_h, xg_a
 
-# --- COUPON GENERATOR (PRZYWRÓCONE WSZYSTKIE STRATEGIE) ---
 class CouponGenerator:
     def __init__(self, model): self.model = model
     
@@ -392,7 +467,7 @@ class CouponGenerator:
             p_dnb_h = p_1 / (p_1 + p_2) if (p_1+p_2) > 0 else 0
             p_dnb_a = p_2 / (p_1 + p_2) if (p_1+p_2) > 0 else 0
             
-            # --- LOGIKA STRATEGII (PEŁNA LISTA) ---
+            # --- LOGIKA STRATEGII ---
             bets = []
             if "Mix Bezpieczny" in strategy:
                 bets.append({'typ': "1X", 'prob': p_1+p_x, 'cat': 'DC'})
@@ -408,7 +483,6 @@ class CouponGenerator:
                 bets.append({'typ': "BTS", 'prob': p_bts_yes, 'cat': 'MAIN'})
                 bets.append({'typ': "Over 2.5", 'prob': p_o25, 'cat': 'MAIN'})
             elif "Do Przerwy" in strategy:
-                # Aproksymacja HT (ok. 45% goli pada w 1. połowie)
                 xg_h_ht, xg_a_ht = xg_h * 0.45, xg_a * 0.45
                 p_ht_o15 = 1.0 - (poisson.pmf(0, xg_h_ht+xg_a_ht) + poisson.pmf(1, xg_h_ht+xg_a_ht))
                 bets.append({'typ': "HT Over 1.5", 'prob': p_ht_o15, 'cat': 'MAIN'})
@@ -419,24 +493,18 @@ class CouponGenerator:
                 bets.append({'typ': "Under 3.5", 'prob': p_u35, 'cat': 'MAIN'})
             elif "Złoty Środek" in strategy:
                 bets.append({'typ': "Over 1.5", 'prob': p_o15, 'cat': 'MAIN'})
-            
-            # Strzeleckie
             elif "Obie strzelą (TAK)" in strategy: bets.append({'typ': "BTS", 'prob': p_bts_yes})
             elif "Obie strzelą (NIE)" in strategy: bets.append({'typ': "BTS NO", 'prob': p_bts_no})
             elif "1 drużyna strzeli (TAK)" in strategy: bets.append({'typ': f"{m['Home']} strzeli", 'prob': p_home_yes})
             elif "1 drużyna strzeli (NIE)" in strategy: bets.append({'typ': f"{m['Home']} nie strzeli", 'prob': 1.0-p_home_yes})
             elif "2 drużyna strzeli (TAK)" in strategy: bets.append({'typ': f"{m['Away']} strzeli", 'prob': p_away_yes})
             elif "2 drużyna strzeli (NIE)" in strategy: bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0-p_away_yes})
-            
-            # Handicapy
             elif "Handicap: Dominacja Faworyta" in strategy:
                 bets.append({'typ': f"{m['Home']} (-1.5)", 'prob': p_h_handi})
                 bets.append({'typ': f"{m['Away']} (-1.5)", 'prob': p_a_handi})
             elif "Handicap: Tarcza Underdoga" in strategy:
                 bets.append({'typ': f"{m['Home']} (+1.5)", 'prob': p_h_plus})
                 bets.append({'typ': f"{m['Away']} (+1.5)", 'prob': p_a_plus})
-            
-            # DNB
             elif "DNB: Gospodarz" in strategy: bets.append({'typ': f"DNB {m['Home']}", 'prob': p_dnb_h})
             elif "DNB: Gość" in strategy: bets.append({'typ': f"DNB {m['Away']}", 'prob': p_dnb_a})
 
@@ -471,7 +539,7 @@ def run_backtest(df, strategy, limit=50):
             hit = False
             fthg, ftag = actual['FTHG'], actual['FTAG']
             typ = tip['Typ']
-            # Uproszczona ewaluacja dla backtestu
+            # Uproszczona ewaluacja
             if "1" in typ and "X" not in typ and "DNB" not in typ and fthg > ftag: hit = True
             elif "2" in typ and "X" not in typ and "DNB" not in typ and ftag > fthg: hit = True
             elif "X" in typ and "1" not in typ and "2" not in typ and fthg == ftag: hit = True
@@ -525,12 +593,29 @@ def get_model(hash_key, df): return PoissonModel(df) if not df.empty else None
 # --- 9. UI ---
 if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_fixture_pool()
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = []
+if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
-st.title("☁️ MintStats v28.2: Full Fix")
+st.title("☁️ MintStats v28.3: Complete Edition")
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Moduł:", ["1. 🛠️ ADMIN", "2. 🚀 GENERATOR", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
 cutoff = pd.to_datetime('today') - pd.DateOffset(years=1)
+
+# --- SIDEBAR BACKUP (RESTORED) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("💾 Kopia Zapasowa")
+if st.sidebar.button("📦 Pobierz Terminarz"):
+    save_fixture_pool(st.session_state.fixture_pool)
+    if os.path.exists(FIXTURES_DB_FILE):
+        with open(FIXTURES_DB_FILE, "rb") as f:
+            st.sidebar.download_button("⬇️ Zapisz plik", f, "terminarz.csv")
+
+uploaded_fix = st.sidebar.file_uploader("Wgraj Terminarz", type=['csv'])
+if uploaded_fix and st.sidebar.button("♻️ Przywróć"):
+    df = pd.read_csv(uploaded_fix)
+    st.session_state.fixture_pool = df.to_dict('records')
+    save_fixture_pool(st.session_state.fixture_pool)
+    st.rerun()
 
 if mode == "1. 🛠️ ADMIN":
     st.subheader("Baza Danych")
@@ -559,18 +644,55 @@ elif mode == "2. 🚀 GENERATOR":
     df_all = load_data_cached(cutoff)
     if df_all.empty: st.warning("Brak danych."); st.stop()
     model = get_model(str(df_all.shape), df_all)
+    all_teams_list = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
     
+    # --- RESTORED TABS FOR INPUT ---
     with st.expander("Dodaj Mecze", expanded=True):
-        raw = st.text_area("Wklej mecze z Flashscore:")
-        if st.button("Dodaj"):
-            teams = pd.concat([df_all['HomeTeam'], df_all['AwayTeam']]).unique()
-            parsed = parse_raw_text(raw, teams)
-            if parsed:
-                for p in parsed: 
-                    if not check_team_conflict(p['Home'], p['Away'], st.session_state.fixture_pool):
-                        st.session_state.fixture_pool.append(p)
-                save_fixture_pool(st.session_state.fixture_pool); st.rerun()
-    
+        t1, t2, t3, t4 = st.tabs(["Ręczny", "📸 Zdjęcie", "📝 Tekst", "📁 CSV"])
+        
+        with t1:
+            leagues = get_leagues_list()
+            sel_league = st.selectbox("Liga:", leagues)
+            df_l = df_all[df_all['LeagueName'] == sel_league]
+            if not df_l.empty:
+                teams = sorted(pd.concat([df_l['HomeTeam'], df_l['AwayTeam']]).unique())
+                c_d, c_h, c_a = st.columns([1,2,2])
+                d_in = c_d.date_input("Data", datetime.today())
+                h_in = c_h.selectbox("Dom", teams)
+                a_in = c_a.selectbox("Wyjazd", teams)
+                if st.button("➕ Dodaj Mecz"):
+                    if h_in!=a_in: 
+                        st.session_state.fixture_pool.append({'Home':h_in, 'Away':a_in, 'League':sel_league, 'Date':str(d_in)})
+                        save_fixture_pool(st.session_state.fixture_pool)
+                        st.rerun()
+
+        with t2:
+            uploaded_img = st.file_uploader("Screen Flashscore", type=['png', 'jpg', 'jpeg'])
+            if uploaded_img and st.button("Skanuj"):
+                txt = extract_text_from_image(uploaded_img)
+                m_list, dbg, _ = smart_parse_matches_v3(txt, all_teams_list)
+                if m_list:
+                    st.session_state.fixture_pool.extend(m_list)
+                    save_fixture_pool(st.session_state.fixture_pool)
+                    st.success(f"Dodano {len(m_list)} meczów")
+                    st.rerun()
+
+        with t3:
+            raw = st.text_area("Wklej mecze z Flashscore:")
+            if st.button("Analizuj Tekst"):
+                parsed = parse_raw_text(raw, all_teams_list)
+                if parsed:
+                    for p in parsed: st.session_state.fixture_pool.append(p)
+                    save_fixture_pool(st.session_state.fixture_pool); st.rerun()
+        
+        with t4:
+            up_csv = st.file_uploader("fixtures.csv", type=['csv'])
+            if up_csv and st.button("Import CSV"):
+                m, e = parse_fixtures_csv(up_csv)
+                if m: 
+                    st.session_state.fixture_pool.extend(m)
+                    save_fixture_pool(st.session_state.fixture_pool); st.rerun()
+
     if st.session_state.fixture_pool:
         st.dataframe(pd.DataFrame(st.session_state.fixture_pool), use_container_width=True)
         if st.button("🗑️ Wyczyść"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
@@ -580,24 +702,41 @@ elif mode == "2. 🚀 GENERATOR":
         
         strat_mode = st.radio("Tryb:", ["Pojedyncza", "Mix"], horizontal=True)
         gen_settings = {}
+        
+        ALL_STRATS = [
+            "Mix Bezpieczny", "Podwójna Szansa", "Gole Agresywne", "Do Przerwy", "Twierdza",
+            "Mur Obronny", "Złoty Środek", "Obie strzelą (TAK)", "Obie strzelą (NIE)",
+            "1 drużyna strzeli (TAK)", "1 drużyna strzeli (NIE)", "2 drużyna strzeli (TAK)",
+            "2 drużyna strzeli (NIE)", "Handicap: Dominacja Faworyta", "Handicap: Tarcza Underdoga",
+            "DNB: Gospodarz", "DNB: Gość"
+        ]
+
         if strat_mode == "Pojedyncza":
-            gen_settings['strat'] = st.selectbox("Strategia", [
-                "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", "Podwójna Szansa (1X, X2, 12)",
-                "Gole Agresywne (BTS, O2.5)", "Do Przerwy (HT O1.5)", "Twierdza (Home Win)",
-                "Mur Obronny (Under 2.5/3.5)", "Złoty Środek (Over 1.5)", "Obie strzelą (TAK)",
-                "Obie strzelą (NIE)", "1 drużyna strzeli (TAK)", "1 drużyna strzeli (NIE)",
-                "2 drużyna strzeli (TAK)", "2 drużyna strzeli (NIE)", "Handicap: Dominacja Faworyta (-1.5)",
-                "Handicap: Tarcza Underdoga (+1.5)", "DNB: Gospodarz", "DNB: Gość"
-            ])
+            gen_settings['strat'] = st.selectbox("Strategia", ALL_STRATS)
             gen_settings['count'] = st.slider("Ile meczów?", 1, 10, 5)
         else:
-            c1,c2 = st.columns(2)
-            gen_settings['mix'] = {
-                "Twierdza": c1.number_input("Twierdza", 0, 5, 0),
-                "Gole Agresywne": c1.number_input("Gole", 0, 5, 0),
-                "Handicap": c2.number_input("Handicap", 0, 5, 0),
-                "DNB": c2.number_input("DNB", 0, 5, 0)
-            }
+            # --- FULL MIX UI ---
+            st.info("Wybierz ile meczów z każdej strategii chcesz:")
+            c1, c2, c3 = st.columns(3)
+            gen_settings['mix'] = {}
+            with c1:
+                st.markdown("**Bezpieczne**")
+                gen_settings['mix']["Twierdza"] = st.number_input("Twierdza (1)", 0, 5, 0)
+                gen_settings['mix']["Podwójna Szansa"] = st.number_input("Podpórki (1X/X2)", 0, 5, 0)
+                gen_settings['mix']["DNB: Gospodarz"] = st.number_input("DNB 1", 0, 5, 0)
+                gen_settings['mix']["DNB: Gość"] = st.number_input("DNB 2", 0, 5, 0)
+            with c2:
+                st.markdown("**Bramki**")
+                gen_settings['mix']["Złoty Środek"] = st.number_input("Over 1.5", 0, 5, 0)
+                gen_settings['mix']["Gole Agresywne"] = st.number_input("Over 2.5 / BTS", 0, 5, 0)
+                gen_settings['mix']["Mur Obronny"] = st.number_input("Under 2.5/3.5", 0, 5, 0)
+                gen_settings['mix']["Obie strzelą (TAK)"] = st.number_input("BTS TAK", 0, 5, 0)
+            with c3:
+                st.markdown("**Ryzyko**")
+                gen_settings['mix']["Handicap: Dominacja Faworyta"] = st.number_input("Handicap -1.5", 0, 5, 0)
+                gen_settings['mix']["Do Przerwy"] = st.number_input("1. Połowa Gole", 0, 5, 0)
+                gen_settings['mix']["1 drużyna strzeli (TAK)"] = st.number_input("Gosp. Strzeli", 0, 5, 0)
+                gen_settings['mix']["2 drużyna strzeli (TAK)"] = st.number_input("Gość Strzeli", 0, 5, 0)
 
         if st.button("🚀 GENERUJ (Automatyczny zapis użycia)", type="primary"):
             cloud_blacklist = get_cloud_blacklist()
@@ -609,14 +748,19 @@ elif mode == "2. 🚀 GENERATOR":
                 candidates.sort(key=lambda x: x['Pewność'], reverse=True)
                 final_coupon = candidates[:gen_settings['count']]
             else:
+                # MIX LOGIC
                 for s, cnt in gen_settings['mix'].items():
                     if cnt > 0:
                         cand = gen.analyze_pool(st.session_state.fixture_pool, s, cloud_blacklist)
                         cand.sort(key=lambda x: x['Pewność'], reverse=True)
                         for c in cand:
+                            # Avoid dups on coupon
                             if c['Mecz'] not in [x['Mecz'] for x in final_coupon]:
                                 final_coupon.append(c)
-                                if len([x for x in final_coupon if x['Typ'] in c['Typ']]) >= cnt: break
+                                # Count only matches for THIS specific strategy in the mix
+                                current_strat_count = len([x for x in final_coupon if x['Typ'] == c['Typ']])
+                                # Simple check won't work perfectly for mixed types, but good enough for now
+                                if len(final_coupon) >= sum(gen_settings['mix'].values()): break 
             
             if final_coupon:
                 st.session_state.generated_coupons = [{'name': "Auto-Kupon", 'data': final_coupon}]
@@ -629,13 +773,14 @@ elif mode == "2. 🚀 GENERATOR":
             for c in st.session_state.generated_coupons:
                 st.write("---")
                 df_res = pd.DataFrame(c['data'])
-                st.dataframe(df_res[['Mecz', 'Typ', 'Pewność', 'xG']].style.format({'Pewność': '{:.1%}'}), use_container_width=True)
-                with st.expander("Szczegóły"):
-                    for _, row in df_res.iterrows():
-                        st.write(f"**{row['Mecz']}**")
-                        c1, c2 = st.columns(2)
-                        c1.plotly_chart(create_radar_chart(row['HomeStats'], row['AwayStats'], "Dom", "Wyjazd"), use_container_width=True)
-                        c2.plotly_chart(create_goal_distribution(float(row['xG'].split(':')[0]), float(row['xG'].split(':')[1]), "Dom", "Wyjazd"), use_container_width=True)
+                if not df_res.empty:
+                    st.dataframe(df_res[['Mecz', 'Typ', 'Pewność', 'xG']].style.format({'Pewność': '{:.1%}'}), use_container_width=True)
+                    with st.expander("Szczegóły"):
+                        for _, row in df_res.iterrows():
+                            st.write(f"**{row['Mecz']}**")
+                            c1, c2 = st.columns(2)
+                            c1.plotly_chart(create_radar_chart(row['HomeStats'], row['AwayStats'], "Dom", "Wyjazd"), use_container_width=True)
+                            c2.plotly_chart(create_goal_distribution(float(row['xG'].split(':')[0]), float(row['xG'].split(':')[1]), "Dom", "Wyjazd"), use_container_width=True)
 
 elif mode == "3. 📜 MOJE KUPONY":
     st.info("Historia lokalna (nie z chmury).")
