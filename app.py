@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v26.7 Cache Buster", layout="wide", page_icon="🧹")
+st.set_page_config(page_title="MintStats v27.0 The Architect", layout="wide", page_icon="🏗️")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -172,9 +172,8 @@ def check_results_for_coupons():
             if not match.empty:
                 row = match.iloc[0]
                 res = evaluate_bet(bet['Typ'], row)
-                # DNB Check
                 if "DNB" in bet['Typ']:
-                    if row['FTHG'] == row['FTAG']: bet['Result'] = '↩️' # Zwrot
+                    if row['FTHG'] == row['FTAG']: bet['Result'] = '↩️'
                     else: bet['Result'] = '✅' if res else '❌'
                 else:
                     bet['Result'] = '✅' if res else '❌'
@@ -192,8 +191,6 @@ def evaluate_bet(bet_type, row):
     fthg, ftag = row['FTHG'], row['FTAG']; goals = fthg + ftag
     try:
         bet_type_clean = bet_type.split('(')[0].strip()
-        
-        # --- STANDARDOWE ---
         if bet_type_clean.startswith("Win"):
             if "Win " + row['HomeTeam'] == bet_type_clean: return fthg > ftag
             if "Win " + row['AwayTeam'] == bet_type_clean: return ftag > fthg
@@ -217,18 +214,13 @@ def evaluate_bet(bet_type, row):
         if "HT Over 1.5" in bet_type_clean:
             if 'HTHG' in row and 'HTAG' in row: return (row['HTHG'] + row['HTAG']) > 1.5
             return False
-
-        # --- HANDICAPY ---
         if "(-1.5)" in bet_type_clean and row['HomeTeam'] in bet_type_clean: return fthg >= (ftag + 2)
         if "(-1.5)" in bet_type_clean and row['AwayTeam'] in bet_type_clean: return ftag >= (fthg + 2)
         if "(+1.5)" in bet_type_clean and row['HomeTeam'] in bet_type_clean: return (fthg + 1.5) > ftag
         if "(+1.5)" in bet_type_clean and row['AwayTeam'] in bet_type_clean: return (ftag + 1.5) > fthg
-        
-        # --- DNB ---
         if "DNB" in bet_type_clean:
             if row['HomeTeam'] in bet_type_clean: return fthg > ftag
             if row['AwayTeam'] in bet_type_clean: return ftag > fthg
-
     except: return False
     return False
 
@@ -642,22 +634,10 @@ class PoissonModel:
         prob_away_0 = poisson.pmf(0, xg_a_ft)
         prob_0_0 = prob_home_0 * prob_away_0
         
-        # --- HANDICAP MATH ---
-        # Home -1.5: Home wins by 2+ (e.g. 2:0, 3:1) -> i >= j + 2
         prob_h_minus_1_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i >= j + 2])
-        
-        # Away -1.5: Away wins by 2+ (e.g. 0:2, 1:3) -> j >= i + 2
         prob_a_minus_1_5 = np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if j >= i + 2])
-        
-        # Home +1.5: Home loses by max 1, draws, or wins. (Opposite of Away -1.5)
         prob_h_plus_1_5 = 1.0 - prob_a_minus_1_5
-        
-        # Away +1.5: Away loses by max 1, draws, or wins. (Opposite of Home -1.5)
         prob_a_plus_1_5 = 1.0 - prob_h_minus_1_5
-
-        # --- DNB MATH ---
-        # W DNB remis nie istnieje. Prawdopodobieństwo jest skalowane do 100% z pominięciem X.
-        # Prob(DNB Home) = Prob(1) / (Prob(1) + Prob(2))
         prob_dnb_home = prob_1 / (prob_1 + prob_2) if (prob_1 + prob_2) > 0 else 0
         prob_dnb_away = prob_2 / (prob_1 + prob_2) if (prob_1 + prob_2) > 0 else 0
 
@@ -675,17 +655,9 @@ class PoissonModel:
             "Under_4.5_FT": np.sum([mat_ft[i, j] for i in range(max_goals) for j in range(max_goals) if i+j <= 4.5]),
             "Over_1.5_HT": np.sum([mat_ht[i, j] for i in range(max_goals) for j in range(max_goals) if i+j > 1.5]),
             "Home_Yes": 1.0 - prob_home_0, "Away_Yes": 1.0 - prob_away_0,
-            
-            # Handicapy
-            "H_Minus_1_5": prob_h_minus_1_5,
-            "A_Minus_1_5": prob_a_minus_1_5,
-            "H_Plus_1_5": prob_h_plus_1_5,
-            "A_Plus_1_5": prob_a_plus_1_5,
-
-            # DNB
-            "DNB_Home": prob_dnb_home,
-            "DNB_Away": prob_dnb_away,
-
+            "H_Minus_1_5": prob_h_minus_1_5, "A_Minus_1_5": prob_a_minus_1_5,
+            "H_Plus_1_5": prob_h_plus_1_5, "A_Plus_1_5": prob_a_plus_1_5,
+            "DNB_Home": prob_dnb_home, "DNB_Away": prob_dnb_away,
             "Exact_Score": most_likely_score
         }
     
@@ -707,7 +679,6 @@ class PoissonModel:
         if chaos_h['factor'] < 0.95 or chaos_a['factor'] < 0.95: texts.append("🌪️ Ostrzeżenie: Przynajmniej jedna drużyna jest nieprzewidywalna (Chaos).")
         return " ".join(texts)
 
-# --- CLASS COUPON GENERATOR (TU BYŁ BŁĄD - PRZYWRÓCONA) ---
 class CouponGenerator:
     def __init__(self, model): self.model = model
     def analyze_pool(self, pool, strategy="Mix Bezpieczny"):
@@ -758,18 +729,6 @@ class CouponGenerator:
                 potential_bets.append({'typ': "Under 3.5", 'prob': probs['Under_3.5_FT'], 'cat': 'MAIN', 'mc_key': None})
             elif "Złoty Środek" in strategy:
                 potential_bets.append({'typ': "Over 1.5", 'prob': probs['Over_1.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 1.5'})
-            elif "Wszystkie" in strategy:
-                potential_bets = [
-                    {'typ': "1", 'prob': probs['1'], 'cat': 'MAIN', 'mc_key': '1'},
-                    {'typ': "2", 'prob': probs['2'], 'cat': 'MAIN', 'mc_key': '2'},
-                    {'typ': "1X", 'prob': probs['1X'], 'cat': 'MAIN', 'mc_key': '1'},
-                    {'typ': "X2", 'prob': probs['X2'], 'cat': 'MAIN', 'mc_key': '2'},
-                    {'typ': "Over 2.5", 'prob': probs['Over_2.5_FT'], 'cat': 'MAIN', 'mc_key': 'Over 2.5'},
-                    {'typ': "Under 4.5", 'prob': probs['Under_4.5_FT'], 'cat': 'MAIN', 'mc_key': None},
-                    {'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'}
-                ]
-            
-            # --- STRATEGIE STRZELECKIE ---
             elif "Obie strzelą (TAK)" in strategy:
                 potential_bets.append({'typ': "BTS", 'prob': probs['BTS_Yes'], 'cat': 'MAIN', 'mc_key': 'BTS'})
             elif "Obie strzelą (NIE)" in strategy:
@@ -782,16 +741,12 @@ class CouponGenerator:
                 potential_bets.append({'typ': f"{m['Away']} strzeli", 'prob': probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
             elif "2 drużyna strzeli (NIE)" in strategy:
                 potential_bets.append({'typ': f"{m['Away']} nie strzeli", 'prob': 1.0 - probs['Away_Yes'], 'cat': 'MAIN', 'mc_key': None})
-
-            # --- HANDICAPY ---
             elif "Handicap: Dominacja Faworyta (-1.5)" in strategy:
                 potential_bets.append({'typ': f"{m['Home']} (-1.5)", 'prob': probs['H_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
                 potential_bets.append({'typ': f"{m['Away']} (-1.5)", 'prob': probs['A_Minus_1_5'], 'cat': 'MAIN', 'mc_key': None})
             elif "Handicap: Tarcza Underdoga (+1.5)" in strategy:
                 potential_bets.append({'typ': f"{m['Home']} (+1.5)", 'prob': probs['H_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
                 potential_bets.append({'typ': f"{m['Away']} (+1.5)", 'prob': probs['A_Plus_1_5'], 'cat': 'MAIN', 'mc_key': None})
-
-            # --- DNB ---
             elif "DNB: Gospodarz" in strategy:
                 potential_bets.append({'typ': f"DNB {m['Home']}", 'prob': probs['DNB_Home'], 'cat': 'MAIN', 'mc_key': None})
             elif "DNB: Gość" in strategy:
@@ -819,7 +774,7 @@ class CouponGenerator:
                 })
         return res
 
-# --- 7. CACHE (MUSI BYĆ POD KLASAMI) ---
+# --- 7. CACHE ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_and_filter_data(cutoff_date):
     try:
@@ -887,7 +842,7 @@ if 'generated_coupons' not in st.session_state: st.session_state.generated_coupo
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
 # --- 10. INTERFEJS UŻYTKOWNIKA ---
-st.title("☁️ MintStats v26.6: Resurrection")
+st.title("☁️ MintStats v27.0: The Architect")
 
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Wybierz moduł:", ["1. 🛠️ ADMIN (Baza Danych)", "2. 🚀 GENERATOR KUPONÓW", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
@@ -897,7 +852,6 @@ st.sidebar.subheader("⚙️ Ustawienia Modelu")
 years_back = st.sidebar.slider("Horyzont Czasowy (Lata)", 1, 10, 2, help="Ile lat wstecz analizować? Mniej = świeża forma.")
 cutoff_date = pd.to_datetime('today') - pd.DateOffset(years=years_back)
 
-# --- CACHE BUSTER BUTTON ---
 if st.sidebar.button("🧹 Wyczyść Pamięć (Cache)"):
     st.cache_data.clear()
     st.cache_resource.clear()
@@ -1086,34 +1040,53 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
 
         st.divider()
         st.header("🎲 Generator Kuponów")
-        c1, c2, c3 = st.columns(3)
-        with c1: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
-        with c2: strat = st.selectbox("Strategia", [
-            "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", 
-            "Podwójna Szansa (1X, X2, 12)",
-            "Gole Agresywne (BTS, O2.5)",
-            "Do Przerwy (HT O1.5)",
-            "Twierdza (Home Win)",
-            "Mur Obronny (Under 2.5/3.5)",
-            "Złoty Środek (Over 1.5)",
-            "Obie strzelą (TAK)",
-            "Obie strzelą (NIE)",
-            "1 drużyna strzeli (TAK)",
-            "1 drużyna strzeli (NIE)",
-            "2 drużyna strzeli (TAK)",
-            "2 drużyna strzeli (NIE)",
-            "Handicap: Dominacja Faworyta (-1.5)",
-            "Handicap: Tarcza Underdoga (+1.5)",
-            "DNB: Gospodarz (Zwrot przy X)",
-            "DNB: Gość (Zwrot przy X)"
-        ])
-        with c3:
-            if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
-            else:
-                num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
-                events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
-                chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
         
+        # --- ZMIANA: WYBÓR TRYBU ---
+        strat_mode = st.radio("Tryb generowania:", ["🎯 Pojedyncza Strategia", "🎛️ Kreator Własny (Mix)"], horizontal=True)
+        
+        strat = None
+        mix_requests = {}
+        
+        if strat_mode == "🎯 Pojedyncza Strategia":
+            c1, c2, c3 = st.columns(3)
+            with c1: 
+                strat = st.selectbox("Strategia", [
+                    "Mix Bezpieczny (1X, X2, U4.5, O0.5, Gole)", "Podwójna Szansa (1X, X2, 12)",
+                    "Gole Agresywne (BTS, O2.5)", "Do Przerwy (HT O1.5)", "Twierdza (Home Win)",
+                    "Mur Obronny (Under 2.5/3.5)", "Złoty Środek (Over 1.5)", "Obie strzelą (TAK)",
+                    "Obie strzelą (NIE)", "1 drużyna strzeli (TAK)", "1 drużyna strzeli (NIE)",
+                    "2 drużyna strzeli (TAK)", "2 drużyna strzeli (NIE)", "Handicap: Dominacja Faworyta (-1.5)",
+                    "Handicap: Tarcza Underdoga (+1.5)", "DNB: Gospodarz", "DNB: Gość"
+                ])
+            with c2: gen_mode = st.radio("Tryb:", ["Jeden Pewny Kupon", "System Rozpisowy"])
+            with c3:
+                if gen_mode == "Jeden Pewny Kupon": coupon_len = st.number_input("Długość", 1, 50, 12)
+                else:
+                    num_coupons = st.number_input("Ile kuponów?", 1, 10, 3)
+                    events_per_coupon = st.number_input("Mecze na kupon?", 1, 20, 5)
+                    chaos_factor = st.slider("Pula (Top X)", 10, 100, 30)
+        else:
+            # TRYB MIX
+            st.info("💡 Wpisz ile meczów z danej kategorii chcesz dodać do kuponu.")
+            col_mix1, col_mix2, col_mix3 = st.columns(3)
+            with col_mix1:
+                st.markdown("**Bezpieczne & Podpórki**")
+                mix_requests["Twierdza (Home Win)"] = st.number_input("Twierdza (1)", 0, 10, 0)
+                mix_requests["Podwójna Szansa (1X, X2, 12)"] = st.number_input("Podwójna Szansa", 0, 10, 0)
+                mix_requests["DNB: Gospodarz"] = st.number_input("DNB: Gospodarz", 0, 10, 0)
+                mix_requests["DNB: Gość"] = st.number_input("DNB: Gość", 0, 10, 0)
+            with col_mix2:
+                st.markdown("**Bramki**")
+                mix_requests["Złoty Środek (Over 1.5)"] = st.number_input("Over 1.5", 0, 10, 0)
+                mix_requests["Gole Agresywne (BTS, O2.5)"] = st.number_input("Over 2.5 / BTS", 0, 10, 0)
+                mix_requests["Mur Obronny (Under 2.5/3.5)"] = st.number_input("Under 2.5/3.5", 0, 10, 0)
+                mix_requests["Obie strzelą (TAK)"] = st.number_input("BTS TAK", 0, 10, 0)
+            with col_mix3:
+                st.markdown("**Ryzyko & Handicap**")
+                mix_requests["Handicap: Dominacja Faworyta (-1.5)"] = st.number_input("Handicap -1.5", 0, 10, 0)
+                mix_requests["Handicap: Tarcza Underdoga (+1.5)"] = st.number_input("Handicap +1.5", 0, 10, 0)
+                mix_requests["Do Przerwy (HT O1.5)"] = st.number_input("1. Połowa Over 1.5", 0, 10, 0)
+
         # --- DATE FILTER ---
         available_dates = sorted(list(set([m['Date'] for m in st.session_state.fixture_pool])))
         selected_dates = st.multiselect("📅 Wybierz daty meczów do analizy:", available_dates, default=available_dates)
@@ -1124,30 +1097,55 @@ elif mode == "2. 🚀 GENERATOR KUPONÓW":
             if not filtered_pool:
                 st.warning("Brak meczów w wybranych datach.")
             else:
-                analyzed_pool = gen.analyze_pool(filtered_pool, strat)
-                if "Mix Bezpieczny" in strat:
-                    cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
-                    cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
-                    cat_team = sorted([x for x in analyzed_pool if x['Kategoria'] == 'TEAM'], key=lambda x: x['Pewność'], reverse=True)
-                    mixed_list = []
-                    max_len = max(len(cat_dc), len(cat_uo), len(cat_team))
-                    for i in range(max_len):
-                        if i < len(cat_dc): mixed_list.append(cat_dc[i])
-                        if i < len(cat_uo): mixed_list.append(cat_uo[i])
-                        if i < len(cat_team): mixed_list.append(cat_team[i])
-                    final_pool = mixed_list
-                else: final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
+                if strat_mode == "🎯 Pojedyncza Strategia":
+                    analyzed_pool = gen.analyze_pool(filtered_pool, strat)
+                    if "Mix Bezpieczny" in strat:
+                        cat_dc = sorted([x for x in analyzed_pool if x['Kategoria'] == 'DC'], key=lambda x: x['Pewność'], reverse=True)
+                        cat_uo = sorted([x for x in analyzed_pool if x['Kategoria'] == 'U/O'], key=lambda x: x['Pewność'], reverse=True)
+                        cat_team = sorted([x for x in analyzed_pool if x['Kategoria'] == 'TEAM'], key=lambda x: x['Pewność'], reverse=True)
+                        mixed_list = []
+                        max_len = max(len(cat_dc), len(cat_uo), len(cat_team))
+                        for i in range(max_len):
+                            if i < len(cat_dc): mixed_list.append(cat_dc[i])
+                            if i < len(cat_uo): mixed_list.append(cat_uo[i])
+                            if i < len(cat_team): mixed_list.append(cat_team[i])
+                        final_pool = mixed_list
+                    else: final_pool = sorted(analyzed_pool, key=lambda x: x['Pewność'], reverse=True)
 
-                st.session_state.generated_coupons = [] 
-                if gen_mode == "Jeden Pewny Kupon":
-                    st.session_state.generated_coupons.append({"name": f"Top {strat}", "data": final_pool[:coupon_len]})
-                else: 
-                    candidate_pool = final_pool[:chaos_factor]
-                    if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
+                    st.session_state.generated_coupons = [] 
+                    if gen_mode == "Jeden Pewny Kupon":
+                        st.session_state.generated_coupons.append({"name": f"Top {strat}", "data": final_pool[:coupon_len]})
+                    else: 
+                        candidate_pool = final_pool[:chaos_factor]
+                        if len(candidate_pool) < events_per_coupon: st.error("Za mało meczów w puli!")
+                        else:
+                            for i in range(num_coupons):
+                                random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
+                                st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
+                else:
+                    # --- LOGIKA KREATORA WŁASNEGO (MIX) ---
+                    final_mix = []
+                    used_matches = set()
+                    
+                    for s_name, count in mix_requests.items():
+                        if count > 0:
+                            candidates = gen.analyze_pool(filtered_pool, s_name)
+                            candidates.sort(key=lambda x: x['Pewność'], reverse=True)
+                            
+                            added = 0
+                            for bet in candidates:
+                                # Sprawdzamy czy mecz juz nie byl uzyty (zeby nie obstawiac tego samego meczu 2 razy)
+                                if bet['Mecz'] not in used_matches:
+                                    final_mix.append(bet)
+                                    used_matches.add(bet['Mecz'])
+                                    added += 1
+                                if added >= count:
+                                    break
+                    
+                    if final_mix:
+                        st.session_state.generated_coupons = [{"name": " Twój Własny Mix", "data": final_mix}]
                     else:
-                        for i in range(num_coupons):
-                            random_selection = random.sample(candidate_pool, min(len(candidate_pool), events_per_coupon))
-                            st.session_state.generated_coupons.append({"name": f"Kupon Losowy #{i+1}", "data": random_selection})
+                        st.warning("Nie znaleziono typów spełniających kryteria.")
 
         if st.session_state.generated_coupons:
             st.write("---")
