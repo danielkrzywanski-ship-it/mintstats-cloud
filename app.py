@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # --- 1. KONFIGURACJA ---
-st.set_page_config(page_title="MintStats v28.3 Complete", layout="wide", page_icon="💎")
+st.set_page_config(page_title="MintStats v28.5 Fix", layout="wide", page_icon="🔧")
 FIXTURES_DB_FILE = "my_fixtures.csv"
 COUPONS_DB_FILE = "my_coupons.csv"
 
@@ -41,21 +41,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. SŁOWNIKI ---
-TEAM_ALIASES = {
-    "avs": "AFS", "avs futebol": "AFS", "afs": "AFS", "brag": "Sp Braga", "braga": "Sp Braga",
-    "sc braga": "Sp Braga", "sporting": "Sp Lisbon", "sporting cp": "Sp Lisbon", "fc porto": "Porto",
-    "man utd": "Man United", "man city": "Man City", "leeds": "Leeds", "arsenal": "Arsenal",
-    "chelsea": "Chelsea", "liverpool": "Liverpool", "real madrid": "Real Madrid", "barcelona": "Barcelona",
-    "bayern": "Bayern Munich", "psg": "Paris SG", "juventus": "Juventus", "inter": "Inter Milan",
-    "milan": "Milan", "napoli": "Napoli", "roma": "Roma", "ajax": "Ajax", "feyenoord": "Feyenoord",
-    "benfica": "Benfica", "porto": "Porto", "celtic": "Celtic", "rangers": "Rangers",
-    "valiadolia": "Valladolid", "betis": "Real Betis", "celta": "Celta", "monchengladbach": "M'gladbach",
-    "mainz": "Mainz 05", "frankfurt": "Ein Frankfurt", "parc": "Pau FC", "b tyon": "Lyon",
-    "young boys": "Young Boys", "servette": "Servette", "lugano": "Lugano", "basel": "Basel",
-    "malmo": "Malmo FF", "aik": "AIK", "djurgarden": "Djurgarden", "rosenborg": "Rosenborg", "bodo/glimt": "Bodo Glimt",
-    "legia": "Legia Warsaw", "lech": "Lech Poznan", "rakow": "Rakow Czestochowa"
-}
-
 LEAGUE_NAMES = {
     'E0': '🇬🇧 Anglia - Premier League', 'E1': '🇬🇧 Anglia - Championship', 'E2': '🇬🇧 Anglia - League One', 'E3': '🇬🇧 Anglia - League Two', 'EC': '🇬🇧 Anglia - Conference',
     'D1': '🇩🇪 Niemcy - Bundesliga', 'D2': '🇩🇪 Niemcy - 2. Bundesliga',
@@ -270,8 +255,8 @@ def get_db_status():
 # --- 5. WYKRESY ---
 def create_radar_chart(h_stats, a_stats, h_name, a_name):
     categories = ['Atak', 'Obrona', 'Forma', 'Chaos']
-    h_v = [min(h_stats['att']*50,100), min((2-h_stats['def'])*50,100), h_stats['form_score'], h_stats['chaos_score']]
-    a_v = [min(a_stats['att']*50,100), min((2-a_stats['def'])*50,100), a_stats['form_score'], a_stats['chaos_score']]
+    h_v = [min(h_stats['att']*50,100), min((2-h_stats['def'])*50,100), h_stats.get('form_score', 50), h_stats.get('chaos_score', 50)]
+    a_v = [min(a_stats['att']*50,100), min((2-a_stats['def'])*50,100), a_stats.get('form_score', 50), a_stats.get('chaos_score', 50)]
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=h_v, theta=categories, fill='toself', name=h_name, line_color='#00C896'))
     fig.add_trace(go.Scatterpolar(r=a_v, theta=categories, fill='toself', name=a_name, line_color='#FF4B4B'))
@@ -349,10 +334,14 @@ def parse_raw_text(text_input, available_teams):
         if " - " in line: parts = line.split(" - ")
         elif " vs " in line: parts = line.split(" vs ")
         if len(parts) >= 2:
-            raw_home = parts[0]; raw_away_chunk = parts[1]; raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0]
-            home_team = resolve_team_name(raw_home, available_teams); away_team = resolve_team_name(raw_away, available_teams)
-            if home_team and away_team and home_team != away_team:
-                found_matches.append({'Home': home_team, 'Away': away_team, 'League': 'Text Import', 'Date': today_str})
+            raw_home = parts[0].strip(); raw_away_chunk = parts[1].strip(); raw_away = re.split(r'[\d\.]+', raw_away_chunk)[0].strip()
+            
+            # Simple fuzzy match
+            h_match = difflib.get_close_matches(raw_home, available_teams, n=1, cutoff=0.6)
+            a_match = difflib.get_close_matches(raw_away, available_teams, n=1, cutoff=0.6)
+            
+            if h_match and a_match and h_match[0] != a_match[0]:
+                found_matches.append({'Home': h_match[0], 'Away': a_match[0], 'League': 'Text Import', 'Date': today_str})
     return found_matches
 
 def smart_parse_matches_v3(text_input, available_teams):
@@ -423,6 +412,13 @@ class PoissonModel:
         xg_h = h_att * a_def * self.league_avg_ft * self.home_adv
         xg_a = a_att * h_def * self.league_avg_ft
         return xg_h, xg_a
+    
+    # --- FIX: Helper to get FULL stats for plotting ---
+    def get_full_stats(self, team):
+        base = self.team_stats_ft.get(team, {'att': 1.0, 'def': 1.0})
+        form = self.team_form.get(team, {'score': 50})
+        chaos = self.team_chaos.get(team, {'score': 50})
+        return {**base, 'form_score': form['score'], 'chaos_score': chaos['score']}
 
 class CouponGenerator:
     def __init__(self, model): self.model = model
@@ -458,7 +454,6 @@ class CouponGenerator:
             p_home_yes = 1.0 - h_probs[0]
             p_away_yes = 1.0 - a_probs[0]
             
-            # Handicaps & DNB
             p_h_handi = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if i >= j+2)
             p_a_handi = sum(h_probs[i]*a_probs[j] for i in range(6) for j in range(6) if j >= i+2)
             p_h_plus = 1.0 - p_a_handi
@@ -512,11 +507,12 @@ class CouponGenerator:
                 best = sorted(bets, key=lambda x: x['prob'], reverse=True)[0]
                 chaos_mod = self.model.team_chaos[m['Home']]['factor'] * self.model.team_chaos[m['Away']]['factor']
                 
+                # --- FIX: USE FULL STATS ---
                 res.append({
                     'Mecz': match_id, 'Liga': m['League'], 'Date': m['Date'],
                     'Typ': best['typ'], 'Pewność': best['prob'] * chaos_mod,
-                    'HomeStats': self.model.team_stats_ft[m['Home']],
-                    'AwayStats': self.model.team_stats_ft[m['Away']],
+                    'HomeStats': self.model.get_full_stats(m['Home']),
+                    'AwayStats': self.model.get_full_stats(m['Away']),
                     'xG': f"{xg_h:.2f}:{xg_a:.2f}"
                 })
         return res
@@ -595,7 +591,7 @@ if 'fixture_pool' not in st.session_state: st.session_state.fixture_pool = load_
 if 'generated_coupons' not in st.session_state: st.session_state.generated_coupons = []
 if 'last_ocr_debug' not in st.session_state: st.session_state.last_ocr_debug = None
 
-st.title("☁️ MintStats v28.3: Complete Edition")
+st.title("☁️ MintStats v28.5: Bug Fix")
 st.sidebar.header("Panel Sterowania")
 mode = st.sidebar.radio("Moduł:", ["1. 🛠️ ADMIN", "2. 🚀 GENERATOR", "3. 📜 MOJE KUPONY", "4. 🧪 LABORATORIUM"])
 
@@ -694,8 +690,21 @@ elif mode == "2. 🚀 GENERATOR":
                     save_fixture_pool(st.session_state.fixture_pool); st.rerun()
 
     if st.session_state.fixture_pool:
+        # --- BUTTONS FOR MANAGING FIXTURES (RESTORED) ---
+        c_clean, c_clear = st.columns(2)
+        with c_clean:
+            if st.button("🧹 Usuń przeterminowane"):
+                st.session_state.fixture_pool, removed = clean_expired_matches(st.session_state.fixture_pool)
+                save_fixture_pool(st.session_state.fixture_pool)
+                st.success(f"Usunięto {removed} starych meczów.")
+                st.rerun()
+        with c_clear:
+            if st.button("🗑️ Wyczyść WSZYSTKO"):
+                st.session_state.fixture_pool = []
+                save_fixture_pool([])
+                st.rerun()
+                
         st.dataframe(pd.DataFrame(st.session_state.fixture_pool), use_container_width=True)
-        if st.button("🗑️ Wyczyść"): st.session_state.fixture_pool = []; save_fixture_pool([]); st.rerun()
         
         st.divider()
         st.subheader("Generowanie")
@@ -713,7 +722,7 @@ elif mode == "2. 🚀 GENERATOR":
 
         if strat_mode == "Pojedyncza":
             gen_settings['strat'] = st.selectbox("Strategia", ALL_STRATS)
-            gen_settings['count'] = st.slider("Ile meczów?", 1, 10, 5)
+            gen_settings['count'] = st.slider("Ile meczów?", 1, 50, 10) # FIX: 50 limit
         else:
             # --- FULL MIX UI ---
             st.info("Wybierz ile meczów z każdej strategii chcesz:")
@@ -730,7 +739,7 @@ elif mode == "2. 🚀 GENERATOR":
                 gen_settings['mix']["Złoty Środek"] = st.number_input("Over 1.5", 0, 5, 0)
                 gen_settings['mix']["Gole Agresywne"] = st.number_input("Over 2.5 / BTS", 0, 5, 0)
                 gen_settings['mix']["Mur Obronny"] = st.number_input("Under 2.5/3.5", 0, 5, 0)
-                gen_settings['mix']["Obie strzelą (TAK)"] = st.number_input("BTS TAK", 0, 5, 0)
+                gen_settings['mix']["Obie strzelą (TAK)" = st.number_input("BTS TAK", 0, 5, 0)
             with c3:
                 st.markdown("**Ryzyko**")
                 gen_settings['mix']["Handicap: Dominacja Faworyta"] = st.number_input("Handicap -1.5", 0, 5, 0)
